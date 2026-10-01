@@ -17,9 +17,15 @@ pub const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 
 pub enum ClientEvent {
     Connecting,
-    Connected { targets: Vec<Target> },
+    Connected {
+        targets: Vec<Target>,
+    },
     Record(LogRecord),
-    Disconnected { reason: String },
+    /// A target started, stopped or was removed; `state` holds its new state.
+    TargetChanged(Target),
+    Disconnected {
+        reason: String,
+    },
 }
 
 /// Lets the UI cut the reconnect delay short.
@@ -91,6 +97,14 @@ async fn tail_once(connection: &Connection, tx: &UnboundedSender<ClientEvent>) -
     )
     .await?;
 
+    // Subscribe to state changes before listing, so none fall in the gap. Replaying an event
+    // that the listing already reflects is harmless: each one carries the final state.
+    let changes = client
+        .watch_targets(v1::WatchTargetsRequest {})
+        .await?
+        .into_inner()
+        .map(|target| target.map(|t| ClientEvent::TargetChanged(t.into())));
+
     let targets: Vec<Target> = client
         .list_targets(v1::ListTargetsRequest { all: true })
         .await?
@@ -101,15 +115,22 @@ async fn tail_once(connection: &Connection, tx: &UnboundedSender<ClientEvent>) -
         .collect();
     tx.unbounded_send(ClientEvent::Connected { targets })?;
 
-    let mut stream = client
+    let records = client
         .tail(v1::TailRequest {
             target_ids: Vec::new(),
             backlog: BACKLOG,
         })
         .await?
-        .into_inner();
-    while let Some(record) = stream.next().await {
-        tx.unbounded_send(ClientEvent::Record(record?.into()))?;
+        .into_inner()
+        .map(|record| record.map(|r| ClientEvent::Record(r.into())));
+
+    // The log stream ending means the connection is over, whatever the watch stream is doing.
+    let mut events = std::pin::pin!(futures::stream::select(
+        records.map(Some).chain(futures::stream::once(async { None })),
+        changes.map(Some),
+    ));
+    while let Some(Some(event)) = events.next().await {
+        tx.unbounded_send(event?)?;
     }
     Ok(())
 }

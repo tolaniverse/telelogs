@@ -97,6 +97,34 @@ impl DockerSource {
 
 impl DockerSource {
     /// Tails every running container and keeps adding containers as they start.
+    /// Streams a target, with its new `state`, whenever a container starts, exits, pauses,
+    /// resumes or is removed.
+    pub fn watch_targets(&self) -> BoxStream<'static, Result<Target>> {
+        let filters = HashMap::from([
+            ("type".to_string(), vec!["container".to_string()]),
+            (
+                "event".to_string(),
+                ["start", "die", "pause", "unpause", "destroy"]
+                    .map(String::from)
+                    .to_vec(),
+            ),
+        ]);
+        self.docker
+            .events(Some(EventsOptions {
+                filters: Some(filters),
+                ..Default::default()
+            }))
+            .filter_map(|event| async move {
+                let event = match event.context("watching Docker events") {
+                    Ok(event) => event,
+                    Err(e) => return Some(Err(e)),
+                };
+                let state = state_after(event.action.as_deref()?)?;
+                target_from_event(event.actor?, state).map(Ok)
+            })
+            .boxed()
+    }
+
     pub async fn tail_live(&self, backlog: u32) -> Result<BoxStream<'static, Result<LogRecord>>> {
         // Subscribe before listing so a container that starts in between isn't missed.
         let filters = HashMap::from([
@@ -139,9 +167,25 @@ fn unix_now() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
+/// The state a container is in after a lifecycle event, using Docker's own state names
+/// (plus "removed"). Other events don't change what the UI shows.
+fn state_after(action: &str) -> Option<&'static str> {
+    match action {
+        "start" | "unpause" => Some("running"),
+        "die" => Some("exited"),
+        "pause" => Some("paused"),
+        "destroy" => Some("removed"),
+        _ => None,
+    }
+}
+
 /// Builds a target from a container `start` event. Event attributes carry the container's
 /// name, image and labels.
 fn started_target(actor: bollard::models::EventActor) -> Option<Target> {
+    target_from_event(actor, "running")
+}
+
+fn target_from_event(actor: bollard::models::EventActor, state: &str) -> Option<Target> {
     let id = actor.id?;
     let mut attributes = actor.attributes.unwrap_or_default();
     let name = attributes
@@ -153,7 +197,7 @@ fn started_target(actor: bollard::models::EventActor) -> Option<Target> {
         id,
         name,
         source: SourceKind::Docker,
-        state: "running".into(),
+        state: state.into(),
         labels,
     })
 }
@@ -259,6 +303,14 @@ fn split_timestamp(line: &str) -> (SystemTime, &str) {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn maps_lifecycle_events_to_states() {
+        assert_eq!(state_after("start"), Some("running"));
+        assert_eq!(state_after("die"), Some("exited"));
+        assert_eq!(state_after("destroy"), Some("removed"));
+        assert_eq!(state_after("exec_start"), None);
+    }
 
     #[test]
     fn builds_target_from_start_event() {

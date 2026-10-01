@@ -244,6 +244,7 @@ impl Workspace {
                     self.status = Status::Connected;
                 }
                 ClientEvent::Disconnected { reason } => self.status = Status::Disconnected { reason },
+                ClientEvent::TargetChanged(target) => self.update_target(target),
                 ClientEvent::Record(record) => {
                     self.note_target(&record);
                     let entry = Entry {
@@ -286,6 +287,30 @@ impl Workspace {
             labels: record.labels.clone(),
         });
         self.enabled.entry(record.origin.clone()).or_insert(true);
+    }
+
+    /// Applies a lifecycle change from the server. Targets are matched by name, which is also how
+    /// lines and toggles refer to them; a recreated container with the same name is the same target.
+    fn update_target(&mut self, target: Target) {
+        let position = self.targets.iter().position(|t| t.name == target.name);
+        if target.state == "removed" {
+            // Keep a removed container while its lines are still in the buffer, so they stay
+            // filterable; otherwise drop it from the sidebar.
+            let has_lines = self.entries.iter().any(|e| e.record.origin == target.name);
+            match position {
+                Some(ix) if has_lines => self.targets[ix].state = target.state,
+                Some(ix) => {
+                    self.targets.remove(ix);
+                }
+                None => {}
+            }
+            return;
+        }
+        self.enabled.entry(target.name.clone()).or_insert(true);
+        match position {
+            Some(ix) => self.targets[ix] = target,
+            None => self.targets.push(target),
+        }
     }
 
     fn refilter(&mut self, cx: &mut Context<Self>) {

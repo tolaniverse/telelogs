@@ -10,6 +10,8 @@ service LogService {
   rpc ListTargets(ListTargetsRequest) returns (ListTargetsResponse);
   // Streams log records from the selected targets until the client disconnects.
   rpc Tail(TailRequest) returns (stream LogRecord);
+  // Streams a target, with its new state, whenever one starts, stops or is removed.
+  rpc WatchTargets(WatchTargetsRequest) returns (stream Target);
 }
 
 enum SourceKind {
@@ -50,6 +52,8 @@ message ListTargetsRequest {
 message ListTargetsResponse {
   repeated Target targets = 1;
 }
+
+message WatchTargetsRequest {}
 
 message TailRequest {
   // Target ids to tail. Empty means every running target.

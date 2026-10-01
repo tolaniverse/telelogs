@@ -19,6 +19,7 @@ impl Logs {
 }
 
 type RecordStream = Pin<Box<dyn Stream<Item = Result<v1::LogRecord, Status>> + Send>>;
+type TargetStream = Pin<Box<dyn Stream<Item = Result<v1::Target, Status>> + Send>>;
 
 #[tonic::async_trait]
 impl LogService for Logs {
@@ -69,6 +70,20 @@ impl LogService for Logs {
             record
                 .map(v1::LogRecord::from)
                 .map_err(|e| Status::internal(format!("{e:#}")))
+        });
+        Ok(Response::new(Box::pin(stream)))
+    }
+
+    type WatchTargetsStream = TargetStream;
+
+    async fn watch_targets(
+        &self,
+        _request: Request<v1::WatchTargetsRequest>,
+    ) -> Result<Response<TargetStream>, Status> {
+        let stream = self.docker.watch_targets().map(|target| {
+            target
+                .map(v1::Target::from)
+                .map_err(|e| Status::unavailable(format!("{e:#}")))
         });
         Ok(Response::new(Box::pin(stream)))
     }
