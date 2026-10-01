@@ -89,34 +89,44 @@ impl Workspace {
         let kind = self.add_kind;
         let inputs = &self.add_inputs;
 
-        let kinds = div().px(px(22.)).py(px(18.)).flex().gap(px(10.)).children(KINDS.into_iter().map(|k| {
-            let selected = k == kind;
-            div()
-                .id(SharedString::from(format!("kind-{}", k.as_str())))
-                .flex_1()
-                .flex()
-                .flex_col()
-                .gap(px(10.))
-                .p(px(14.))
-                .rounded(px(10.))
-                .border_1()
-                .border_color(if selected { t.fg } else { t.line2 })
-                .bg(t.bg)
-                .cursor_pointer()
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.add_kind = k;
-                    cx.notify();
-                }))
-                .child(icon(kind_icon(k), 22., t.fg))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(2.))
-                        .child(div().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).child(kind_label(k)))
-                        .child(div().text_size(px(12.)).text_color(t.fg3).child(kind_description(k))),
-                )
-        }));
+        let kinds = div()
+            .px(px(22.))
+            .py(px(18.))
+            .flex()
+            .gap(px(10.))
+            .children(KINDS.into_iter().map(|k| {
+                let selected = k == kind;
+                div()
+                    .id(SharedString::from(format!("kind-{}", k.as_str())))
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .p(px(14.))
+                    .rounded(px(10.))
+                    .border_1()
+                    .border_color(if selected { t.fg } else { t.line2 })
+                    .bg(t.bg)
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.add_kind = k;
+                        cx.notify();
+                    }))
+                    .child(icon(kind_icon(k), 22., t.fg))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.))
+                            .child(
+                                div()
+                                    .text_size(px(13.5))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(kind_label(k)),
+                            )
+                            .child(div().text_size(px(12.)).text_color(t.fg3).child(kind_description(k))),
+                    )
+            }));
 
         let form = div()
             .px(px(22.))
@@ -132,9 +142,12 @@ impl Workspace {
                     .child(field(t, "Kubeconfig context", None, &inputs.kube_context))
                     .child(field(t, "Namespaces", None, &inputs.kube_namespaces))
                     .child(field(t, "Label selector", Some("(optional)"), &inputs.kube_selector)),
-                SourceKind::Vm => el
-                    .child(field(t, "Host", None, &inputs.vm_host))
-                    .child(field(t, "Files to tail", Some("(comma separated, globs allowed)"), &inputs.vm_files)),
+                SourceKind::Vm => el.child(field(t, "Host", None, &inputs.vm_host)).child(field(
+                    t,
+                    "Files to tail",
+                    Some("(comma separated, globs allowed)"),
+                    &inputs.vm_files,
+                )),
             })
             .child(
                 div()
@@ -148,7 +161,12 @@ impl Workspace {
                             .flex_col()
                             .gap(px(2.))
                             .child(div().text_size(px(13.)).child("Backlog per target"))
-                            .child(div().text_size(px(12.)).text_color(t.fg3).child("Historical lines sent before following.")),
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(t.fg3)
+                                    .child("Historical lines sent before following."),
+                            ),
                     )
                     .child(
                         div()
@@ -176,7 +194,10 @@ impl Workspace {
             ),
             _ => (
                 "Kubernetes and VM sources are coming soon.",
-                primary_button(t, "add-connect", "Connect", None).opacity(0.5).cursor_default().into_any_element(),
+                primary_button(t, "add-connect", "Connect", None)
+                    .opacity(0.5)
+                    .cursor_default()
+                    .into_any_element(),
             ),
         };
 
@@ -202,7 +223,12 @@ impl Workspace {
                             .flex()
                             .flex_col()
                             .gap(px(4.))
-                            .child(div().text_size(px(17.)).font_weight(FontWeight::SEMIBOLD).child("Add source"))
+                            .child(
+                                div()
+                                    .text_size(px(17.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Add source"),
+                            )
                             .child(
                                 div()
                                     .text_size(px(13.))

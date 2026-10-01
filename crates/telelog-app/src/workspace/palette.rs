@@ -5,8 +5,8 @@ use gpui_kit::*;
 use super::sidebar::kind_icon;
 use super::{Screen, Status, View, Workspace, modal};
 use crate::theme::{MONO, tokens};
-use crate::ui::widgets::kbd;
 use crate::time_range::{PRESETS, TimeRange};
+use crate::ui::widgets::kbd;
 use crate::ui::{Icon, icon};
 
 #[derive(Clone)]
@@ -49,7 +49,11 @@ impl Workspace {
             command("Navigate", "Agents", Icon::Broadcast, "", Action::Go(Screen::Agents)),
             command(
                 "Actions",
-                if self.view == View::Rows { "Switch to JSON view" } else { "Switch to rows view" },
+                if self.view == View::Rows {
+                    "Switch to JSON view"
+                } else {
+                    "Switch to rows view"
+                },
                 Icon::BracketsCurly,
                 "⌘J",
                 Action::ToggleView,
@@ -64,7 +68,11 @@ impl Workspace {
             command("Actions", "Add source…", Icon::Plus, "", Action::AddSource),
             command(
                 "Actions",
-                if tokens(cx).dark { "Switch to light theme" } else { "Switch to dark theme" },
+                if tokens(cx).dark {
+                    "Switch to light theme"
+                } else {
+                    "Switch to dark theme"
+                },
                 Icon::CircleHalf,
                 "",
                 Action::ToggleTheme,
@@ -78,21 +86,40 @@ impl Workspace {
             shortcut: "",
             action: Action::Range(TimeRange::Last(*window)),
         }));
-        all.push(command("Time range", "All time", Icon::ClockCounterClockwise, "", Action::Range(TimeRange::All)));
+        all.push(command(
+            "Time range",
+            "All time",
+            Icon::ClockCounterClockwise,
+            "",
+            Action::Range(TimeRange::All),
+        ));
         if matches!(self.status, Status::Disconnected { .. }) {
-            all.push(command("Actions", "Reconnect server", Icon::PlugsConnected, "", Action::Reconnect));
+            all.push(command(
+                "Actions",
+                "Reconnect server",
+                Icon::PlugsConnected,
+                "",
+                Action::Reconnect,
+            ));
         }
-        all.extend(self.targets.iter().filter(|target| target.state == "running").map(|target| Command {
-            group: "Tail only…",
-            label: target.name.clone(),
-            glyph: kind_icon(target.source),
-            shortcut: "",
-            action: Action::Solo(target.name.clone()),
-        }));
+        all.extend(
+            self.targets
+                .iter()
+                .filter(|target| target.state == "running")
+                .map(|target| Command {
+                    group: "Tail only…",
+                    label: target.name.clone(),
+                    glyph: kind_icon(target.source),
+                    shortcut: "",
+                    action: Action::Solo(target.name.clone()),
+                }),
+        );
 
         let query = self.palette_input.read(cx).value().to_lowercase();
         all.into_iter()
-            .filter(|c| query.is_empty() || c.label.to_lowercase().contains(&query) || c.group.to_lowercase().contains(&query))
+            .filter(|c| {
+                query.is_empty() || c.label.to_lowercase().contains(&query) || c.group.to_lowercase().contains(&query)
+            })
             .collect()
     }
 
@@ -100,7 +127,11 @@ impl Workspace {
         match action {
             Action::Go(screen) => self.go(screen, cx),
             Action::ToggleView => {
-                let view = if self.view == View::Rows { View::Json } else { View::Rows };
+                let view = if self.view == View::Rows {
+                    View::Json
+                } else {
+                    View::Rows
+                };
                 self.set_view(view, cx);
             }
             Action::ToggleFollow => self.set_follow(!self.follow, cx),
@@ -165,7 +196,13 @@ impl Workspace {
                     }))
                     .child(icon(command.glyph, 16., t.fg2))
                     .child(div().flex_1().text_size(px(13.5)).child(command.label.clone()))
-                    .child(div().font_family(MONO).text_size(px(11.)).text_color(t.fg3).child(command.shortcut))
+                    .child(
+                        div()
+                            .font_family(MONO)
+                            .text_size(px(11.))
+                            .text_color(t.fg3)
+                            .child(command.shortcut),
+                    )
                     .into_any_element(),
             );
         }
@@ -205,7 +242,14 @@ impl Workspace {
                     .child(div().flex_1().child(Input::new(&self.palette_input).appearance(false)))
                     .child(kbd(t, "esc")),
             )
-            .child(div().id("commands").max_h(px(380.)).overflow_y_scroll().p(px(6.)).children(items))
+            .child(
+                div()
+                    .id("commands")
+                    .max_h(px(380.))
+                    .overflow_y_scroll()
+                    .p(px(6.))
+                    .children(items),
+            )
             .child(
                 div()
                     .h(px(38.))
@@ -218,8 +262,22 @@ impl Workspace {
                     .bg(t.bg2)
                     .text_size(px(11.5))
                     .text_color(t.fg3)
-                    .child(div().flex().items_center().gap(px(6.)).child(icon(Icon::ArrowsDownUp, 12., t.fg3)).child("Navigate"))
-                    .child(div().flex().items_center().gap(px(6.)).child(icon(Icon::ArrowElbowDownLeft, 12., t.fg3)).child("Run"))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(icon(Icon::ArrowsDownUp, 12., t.fg3))
+                            .child("Navigate"),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(icon(Icon::ArrowElbowDownLeft, 12., t.fg3))
+                            .child("Run"),
+                    )
                     .child(div().flex_1())
                     .child(div().font_family(MONO).child("⌘J toggle JSON")),
             );

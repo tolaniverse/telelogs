@@ -67,7 +67,11 @@ fn table_head(t: Tokens, columns: &[(&'static str, f32)]) -> Div {
         .text_color(t.fg3)
         .children(columns.iter().map(|(label, width)| {
             let col = div().child(*label);
-            if *width > 0. { col.w(px(*width)).flex_none() } else { col.flex_1() }
+            if *width > 0. {
+                col.w(px(*width)).flex_none()
+            } else {
+                col.flex_1()
+            }
         }))
 }
 
@@ -86,7 +90,11 @@ fn section(t: Tokens, title: &'static str, soon: bool) -> Div {
 impl Workspace {
     pub(super) fn render_sources(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = tokens(cx);
-        let enabled = self.targets.iter().filter(|target| self.is_enabled(&target.name)).count();
+        let enabled = self
+            .targets
+            .iter()
+            .filter(|target| self.is_enabled(&target.name))
+            .count();
         let (status_word, status_color) = match self.status {
             Status::Connected => ("Connected", t.ok),
             Status::Connecting => ("Connecting", t.fg3),
@@ -127,16 +135,44 @@ impl Workspace {
                             .flex()
                             .flex_col()
                             .gap(px(2.))
-                            .child(div().text_size(px(14.)).font_weight(FontWeight::MEDIUM).child("telelog-server"))
-                            .child(div().font_family(MONO).text_size(px(12.)).text_color(t.fg3).child("gRPC · LogService")),
+                            .child(
+                                div()
+                                    .text_size(px(14.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child("telelog-server"),
+                            )
+                            .child(
+                                div()
+                                    .font_family(MONO)
+                                    .text_size(px(12.))
+                                    .text_color(t.fg3)
+                                    .child("gRPC · LogService"),
+                            ),
                     ),
             )
-            .child(labeled(t, "Endpoint", div().flex_1().font_family(MONO).text_size(px(12.5)).child(self.server_addr().to_string())).flex_1())
+            .child(
+                labeled(
+                    t,
+                    "Endpoint",
+                    div()
+                        .flex_1()
+                        .font_family(MONO)
+                        .text_size(px(12.5))
+                        .child(self.server_addr().to_string()),
+                )
+                .flex_1(),
+            )
             .child(
                 labeled(
                     t,
                     "Status",
-                    div().flex().items_center().gap(px(7.)).text_size(px(13.)).child(dot(status_color, 7.)).child(status_word),
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(7.))
+                        .text_size(px(13.))
+                        .child(dot(status_color, 7.))
+                        .child(status_word),
                 )
                 .flex_1(),
             )
@@ -144,13 +180,23 @@ impl Workspace {
                 labeled(
                     t,
                     "Tailing",
-                    div().font_family(MONO).text_size(px(12.5)).child(format!("{enabled} of {} targets", self.targets.len())),
+                    div()
+                        .font_family(MONO)
+                        .text_size(px(12.5))
+                        .child(format!("{enabled} of {} targets", self.targets.len())),
                 )
                 .flex_1(),
             )
             .child(
-                labeled(t, "Backlog", div().font_family(MONO).text_size(px(12.5)).child(format!("{BACKLOG} lines / target")))
-                    .flex_1(),
+                labeled(
+                    t,
+                    "Backlog",
+                    div()
+                        .font_family(MONO)
+                        .text_size(px(12.5))
+                        .child(format!("{BACKLOG} lines / target")),
+                )
+                .flex_1(),
             );
 
         let groups = KINDS.into_iter().map(|kind| {
@@ -163,17 +209,33 @@ impl Workspace {
                 .py(px(12.))
                 .bg(t.bg2)
                 .child(icon(kind_icon(kind), 17., t.fg))
-                .child(div().text_size(px(14.)).font_weight(FontWeight::MEDIUM).child(kind_label(kind)))
-                .child(div().font_family(MONO).text_size(px(12.)).text_color(t.fg3).child(match kind {
-                    telelog_core::SourceKind::Docker => "via telelog-server",
-                    _ => "not connected",
-                }))
+                .child(
+                    div()
+                        .text_size(px(14.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(kind_label(kind)),
+                )
+                .child(
+                    div()
+                        .font_family(MONO)
+                        .text_size(px(12.))
+                        .text_color(t.fg3)
+                        .child(match kind {
+                            telelog_core::SourceKind::Docker => "via telelog-server",
+                            _ => "not connected",
+                        }),
+                )
                 .child(div().flex_1())
                 .map(|el| {
                     if targets.is_empty() && kind != telelog_core::SourceKind::Docker {
                         el.child(pill(t, "Soon"))
                     } else {
-                        el.child(div().text_size(px(12.)).text_color(t.fg3).child(format!("{} targets", targets.len())))
+                        el.child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(t.fg3)
+                                .child(format!("{} targets", targets.len())),
+                        )
                     }
                 });
 
@@ -264,7 +326,17 @@ impl Workspace {
                         .into_any_element(),
                 ),
             ))
-            .child(div().px(px(36.)).pt(px(24.)).pb(px(40.)).flex().flex_col().gap(px(24.)).child(server).children(groups))
+            .child(
+                div()
+                    .px(px(36.))
+                    .pt(px(24.))
+                    .pb(px(40.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(24.))
+                    .child(server)
+                    .children(groups),
+            )
     }
 
     pub(super) fn render_storage(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -279,12 +351,35 @@ impl Workspace {
 
         let stats = card(t)
             .flex()
-            .child(stat(t, "In-memory buffer", Icon::Memory, group_digits(BUFFER), " lines").border_r_1().border_color(t.line))
-            .child(stat(t, "Archived", Icon::Archive, "—".into(), "").border_r_1().border_color(t.line))
-            .child(stat(t, "Oldest in memory", Icon::ClockCounterClockwise, oldest.0, oldest.1));
+            .child(
+                stat(t, "In-memory buffer", Icon::Memory, group_digits(BUFFER), " lines")
+                    .border_r_1()
+                    .border_color(t.line),
+            )
+            .child(
+                stat(t, "Archived", Icon::Archive, "—".into(), "")
+                    .border_r_1()
+                    .border_color(t.line),
+            )
+            .child(stat(
+                t,
+                "Oldest in memory",
+                Icon::ClockCounterClockwise,
+                oldest.0,
+                oldest.1,
+            ));
 
         let buckets = card(t)
-            .child(table_head(t, &[("Bucket", 0.), ("Provider", 0.), ("Region", 0.), ("Size", 90.), ("Status", 110.)]))
+            .child(table_head(
+                t,
+                &[
+                    ("Bucket", 0.),
+                    ("Provider", 0.),
+                    ("Region", 0.),
+                    ("Size", 90.),
+                    ("Status", 110.),
+                ],
+            ))
             .child(
                 div()
                     .px(px(18.))
@@ -296,7 +391,12 @@ impl Workspace {
                     .items_center()
                     .gap(px(6.))
                     .child(icon(Icon::Cylinder, 22., t.fg3))
-                    .child(div().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).child("No buckets connected"))
+                    .child(
+                        div()
+                            .text_size(px(13.5))
+                            .font_weight(FontWeight::MEDIUM)
+                            .child("No buckets connected"),
+                    )
                     .child(
                         div()
                             .text_size(px(12.5))
@@ -305,34 +405,41 @@ impl Workspace {
                     ),
             );
 
-        let retention_row = |title: &'static str, desc: &'static str, options: &[&'static str], current: &'static str, first: bool| {
-            div()
-                .flex()
-                .items_center()
-                .gap(px(20.))
-                .px(px(18.))
-                .py(px(16.))
-                .when(!first, |el| el.border_t_1().border_color(t.line))
-                .child(
-                    div()
-                        .flex_1()
-                        .flex()
-                        .flex_col()
-                        .gap(px(3.))
-                        .child(div().text_size(px(13.5)).child(title))
-                        .child(div().text_size(px(12.5)).text_color(t.fg3).child(desc)),
-                )
-                .child(segmented(
-                    t,
-                    options.iter().map(|label| {
-                        segment(t, SharedString::from(format!("{title}-{label}")), (*label).into(), None, *label == current)
+        let retention_row =
+            |title: &'static str, desc: &'static str, options: &[&'static str], current: &'static str, first: bool| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(20.))
+                    .px(px(18.))
+                    .py(px(16.))
+                    .when(!first, |el| el.border_t_1().border_color(t.line))
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .gap(px(3.))
+                            .child(div().text_size(px(13.5)).child(title))
+                            .child(div().text_size(px(12.5)).text_color(t.fg3).child(desc)),
+                    )
+                    .child(segmented(
+                        t,
+                        options.iter().map(|label| {
+                            segment(
+                                t,
+                                SharedString::from(format!("{title}-{label}")),
+                                (*label).into(),
+                                None,
+                                *label == current,
+                            )
                             .font_family(MONO)
                             .text_size(px(12.))
                             .cursor_default()
                             .into_any_element()
-                    }),
-                ))
-        };
+                        }),
+                    ))
+            };
         let retention = div()
             .rounded(px(10.))
             .border_1()
@@ -361,7 +468,12 @@ impl Workspace {
                 t,
                 "Storage",
                 "Live lines stay in memory. Everything older will land in buckets you own.",
-                Some(primary_button(t, "connect-bucket", "Connect bucket", Some(Icon::Plus)).opacity(0.5).cursor_default().into_any_element()),
+                Some(
+                    primary_button(t, "connect-bucket", "Connect bucket", Some(Icon::Plus))
+                        .opacity(0.5)
+                        .cursor_default()
+                        .into_any_element(),
+                ),
             ))
             .child(
                 div()
@@ -372,8 +484,22 @@ impl Workspace {
                     .flex_col()
                     .gap(px(28.))
                     .child(stats)
-                    .child(div().flex().flex_col().gap(px(12.)).child(section(t, "Buckets", true)).child(buckets))
-                    .child(div().flex().flex_col().gap(px(12.)).child(section(t, "Retention", true)).child(retention)),
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(12.))
+                            .child(section(t, "Buckets", true))
+                            .child(buckets),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(12.))
+                            .child(section(t, "Retention", true))
+                            .child(retention),
+                    ),
             )
     }
 
@@ -436,7 +562,16 @@ impl Workspace {
             );
 
         let members = card(t)
-            .child(table_head(t, &[("Member", 0.), ("Role", 110.), ("Source access", 0.), ("Last active", 100.), ("", 32.)]))
+            .child(table_head(
+                t,
+                &[
+                    ("Member", 0.),
+                    ("Role", 110.),
+                    ("Source access", 0.),
+                    ("Last active", 100.),
+                    ("", 32.),
+                ],
+            ))
             .child(
                 div()
                     .h(px(58.))
@@ -472,12 +607,38 @@ impl Workspace {
                                     .flex_col()
                                     .gap(px(2.))
                                     .child(div().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).child(user))
-                                    .child(div().font_family(MONO).text_size(px(12.)).text_color(t.fg3).child("this device")),
+                                    .child(
+                                        div()
+                                            .font_family(MONO)
+                                            .text_size(px(12.))
+                                            .text_color(t.fg3)
+                                            .child("this device"),
+                                    ),
                             ),
                     )
-                    .child(div().w(px(110.)).flex_none().flex().child(pill(t, "Owner").text_size(px(12.)).py(px(2.)).px(px(9.))))
-                    .child(div().flex_1().font_family(MONO).text_size(px(12.)).text_color(t.fg2).child("All sources"))
-                    .child(div().w(px(100.)).flex_none().text_size(px(12.5)).text_color(t.fg3).child("Now"))
+                    .child(
+                        div()
+                            .w(px(110.))
+                            .flex_none()
+                            .flex()
+                            .child(pill(t, "Owner").text_size(px(12.)).py(px(2.)).px(px(9.))),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .font_family(MONO)
+                            .text_size(px(12.))
+                            .text_color(t.fg2)
+                            .child("All sources"),
+                    )
+                    .child(
+                        div()
+                            .w(px(100.))
+                            .flex_none()
+                            .text_size(px(12.5))
+                            .text_color(t.fg3)
+                            .child("Now"),
+                    )
                     .child(div().w(px(32.)).flex_none().child(icon(Icon::DotsThree, 18., t.fg3))),
             );
 
@@ -486,13 +647,28 @@ impl Workspace {
             .size_full()
             .overflow_y_scroll()
             .child(page_header(t, "Team", "Local workspace · 1 member", None))
-            .child(div().px(px(36.)).pt(px(24.)).pb(px(40.)).flex().flex_col().gap(px(28.)).child(invite).child(members))
+            .child(
+                div()
+                    .px(px(36.))
+                    .pt(px(24.))
+                    .pb(px(40.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(28.))
+                    .child(invite)
+                    .child(members),
+            )
     }
 
     pub(super) fn render_agents(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = tokens(cx);
         let feature = |glyph: Icon, label: &'static str| {
-            div().flex().items_center().gap(px(7.)).child(icon(glyph, 15., t.fg)).child(label)
+            div()
+                .flex()
+                .items_center()
+                .gap(px(7.))
+                .child(icon(glyph, 15., t.fg))
+                .child(label)
         };
         div()
             .relative()

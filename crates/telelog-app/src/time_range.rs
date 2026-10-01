@@ -10,7 +10,10 @@ pub enum TimeRange {
     /// The last `Duration`, measured from now every time the filter is applied.
     Last(Duration),
     /// A fixed window; either end may be open.
-    Between { from: Option<SystemTime>, to: Option<SystemTime> },
+    Between {
+        from: Option<SystemTime>,
+        to: Option<SystemTime>,
+    },
 }
 
 pub const PRESETS: [(Duration, &str); 5] = [
@@ -69,7 +72,11 @@ fn short(t: SystemTime) -> String {
 /// The end of a range, dropping the date when it matches the start's.
 fn short_end(from: SystemTime, to: SystemTime) -> String {
     let (from, to): (DateTime<Local>, DateTime<Local>) = (from.into(), to.into());
-    if from.date_naive() == to.date_naive() { to.format("%H:%M").to_string() } else { to.format("%b %-d, %H:%M").to_string() }
+    if from.date_naive() == to.date_naive() {
+        to.format("%H:%M").to_string()
+    } else {
+        to.format("%b %-d, %H:%M").to_string()
+    }
 }
 
 /// Formats a time the way `parse_local` reads it back.
@@ -85,14 +92,26 @@ pub fn parse_local(input: &str, today: NaiveDate) -> Result<Option<SystemTime>, 
     if input.is_empty() {
         return Ok(None);
     }
-    let naive = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"]
-        .iter()
-        .find_map(|f| NaiveDateTime::parse_from_str(input, f).ok())
-        .or_else(|| NaiveDate::parse_from_str(input, "%Y-%m-%d").ok().map(|d| d.and_time(NaiveTime::MIN)))
-        .or_else(|| {
-            ["%H:%M:%S", "%H:%M"].iter().find_map(|f| NaiveTime::parse_from_str(input, f).ok()).map(|t| today.and_time(t))
-        })
-        .ok_or_else(|| format!("Can't read \"{input}\". Use YYYY-MM-DD HH:MM or HH:MM."))?;
+    let naive = [
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+    ]
+    .iter()
+    .find_map(|f| NaiveDateTime::parse_from_str(input, f).ok())
+    .or_else(|| {
+        NaiveDate::parse_from_str(input, "%Y-%m-%d")
+            .ok()
+            .map(|d| d.and_time(NaiveTime::MIN))
+    })
+    .or_else(|| {
+        ["%H:%M:%S", "%H:%M"]
+            .iter()
+            .find_map(|f| NaiveTime::parse_from_str(input, f).ok())
+            .map(|t| today.and_time(t))
+    })
+    .ok_or_else(|| format!("Can't read \"{input}\". Use YYYY-MM-DD HH:MM or HH:MM."))?;
     Local
         .from_local_datetime(&naive)
         .earliest()
@@ -115,9 +134,18 @@ mod tests {
     #[test]
     fn parses_supported_formats() {
         assert_eq!(parse_local("", today()), Ok(None));
-        assert_eq!(parse_local("2026-09-30 08:15", today()), Ok(Some(local(2026, 9, 30, 8, 15, 0))));
-        assert_eq!(parse_local("2026-09-30 08:15:42", today()), Ok(Some(local(2026, 9, 30, 8, 15, 42))));
-        assert_eq!(parse_local("2026-09-30", today()), Ok(Some(local(2026, 9, 30, 0, 0, 0))));
+        assert_eq!(
+            parse_local("2026-09-30 08:15", today()),
+            Ok(Some(local(2026, 9, 30, 8, 15, 0)))
+        );
+        assert_eq!(
+            parse_local("2026-09-30 08:15:42", today()),
+            Ok(Some(local(2026, 9, 30, 8, 15, 42)))
+        );
+        assert_eq!(
+            parse_local("2026-09-30", today()),
+            Ok(Some(local(2026, 9, 30, 0, 0, 0)))
+        );
         assert_eq!(parse_local(" 21:05 ", today()), Ok(Some(local(2026, 10, 1, 21, 5, 0))));
         assert!(parse_local("yesterday", today()).is_err());
     }
@@ -139,7 +167,10 @@ mod tests {
 
     #[test]
     fn past_window_excludes_now() {
-        let range = TimeRange::Between { from: None, to: Some(SystemTime::UNIX_EPOCH) };
+        let range = TimeRange::Between {
+            from: None,
+            to: Some(SystemTime::UNIX_EPOCH),
+        };
         assert!(!range.includes_now());
         assert!(TimeRange::All.includes_now());
     }
@@ -148,7 +179,10 @@ mod tests {
     fn labels() {
         assert_eq!(TimeRange::All.label(), "All time");
         assert_eq!(TimeRange::Last(Duration::from_secs(3600)).label(), "Last 1 hour");
-        let range = TimeRange::Between { from: Some(local(2026, 10, 1, 9, 0, 0)), to: Some(local(2026, 10, 1, 10, 30, 0)) };
+        let range = TimeRange::Between {
+            from: Some(local(2026, 10, 1, 9, 0, 0)),
+            to: Some(local(2026, 10, 1, 10, 30, 0)),
+        };
         assert_eq!(range.label(), "Oct 1, 09:00 → 10:30");
     }
 }

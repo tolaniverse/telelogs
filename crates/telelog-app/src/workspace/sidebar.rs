@@ -28,7 +28,10 @@ pub const KINDS: [SourceKind; 3] = [SourceKind::Docker, SourceKind::Kubernetes, 
 
 /// The local account name, shown where the design has the signed-in user.
 pub fn user_name() -> String {
-    std::env::var("USER").ok().filter(|u| !u.is_empty()).unwrap_or_else(|| "you".into())
+    std::env::var("USER")
+        .ok()
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| "you".into())
 }
 
 impl Workspace {
@@ -63,13 +66,14 @@ impl Workspace {
             .rounded(px(7.))
             .text_size(px(13.5))
             .cursor_pointer()
-            .when(active, |el| el.bg(t.bg4).text_color(t.fg).font_weight(FontWeight::MEDIUM))
-            .when(!active, |el| el.text_color(t.fg2).hover(|s| s.bg(t.bg3).text_color(t.fg)))
+            .when(active, |el| {
+                el.bg(t.bg4).text_color(t.fg).font_weight(FontWeight::MEDIUM)
+            })
+            .when(!active, |el| {
+                el.text_color(t.fg2).hover(|s| s.bg(t.bg3).text_color(t.fg))
+            })
             .on_click(cx.listener(move |this, _, _, cx| this.go(screen, cx)))
-            .child(
-                icon(glyph, 16., if active { t.fg } else { t.fg2 })
-                    .group_hover(group, |s| s.text_color(t.fg)),
-            )
+            .child(icon(glyph, 16., if active { t.fg } else { t.fg2 }).group_hover(group, |s| s.text_color(t.fg)))
             .child(div().flex_1().child(label))
             .children(badge.map(|b| pill(t, b)))
     }
@@ -86,7 +90,13 @@ impl Workspace {
                 _ => "Targets appear once the server connects.",
             };
             return vec![
-                div().px(px(10.)).py(px(6.)).text_size(px(12.)).text_color(t.fg3).child(note).into_any_element(),
+                div()
+                    .px(px(10.))
+                    .py(px(6.))
+                    .text_size(px(12.))
+                    .text_color(t.fg3)
+                    .child(note)
+                    .into_any_element(),
             ];
         }
 
@@ -114,8 +124,11 @@ impl Workspace {
                         cx.notify();
                     }))
                     .child(
-                        icon(Icon::CaretRight, 11., t.fg3)
-                            .with_transformation(Transformation::rotate(if open { percentage(0.25) } else { percentage(0.) })),
+                        icon(Icon::CaretRight, 11., t.fg3).with_transformation(Transformation::rotate(if open {
+                            percentage(0.25)
+                        } else {
+                            percentage(0.)
+                        })),
                     )
                     .child(icon(kind_icon(kind), 15., t.fg2))
                     .child(div().flex_1().child(kind_label(kind)))
@@ -128,34 +141,39 @@ impl Workspace {
                     );
 
                 let rows = open.then(|| {
-                    div().flex().flex_col().pt(px(2.)).pb(px(6.)).children(targets.into_iter().map(|target| {
-                        let on = self.is_enabled(&target.name);
-                        let name = target.name.clone();
-                        div()
-                            .id(SharedString::from(format!("target-{}", target.id)))
-                            .h(px(27.))
-                            .pl(px(30.))
-                            .pr(px(10.))
-                            .flex()
-                            .items_center()
-                            .gap(px(9.))
-                            .rounded(px(6.))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(t.bg3))
-                            .on_click(cx.listener(move |this, _, _, cx| this.toggle_target(&name, cx)))
-                            .child(checkbox(t, on))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .overflow_hidden()
-                                    .text_ellipsis()
-                                    .whitespace_nowrap()
-                                    .font_family(MONO)
-                                    .text_size(px(11.5))
-                                    .text_color(if on { t.fg } else { t.fg3 })
-                                    .child(target.name.clone()),
-                            )
-                    }))
+                    div()
+                        .flex()
+                        .flex_col()
+                        .pt(px(2.))
+                        .pb(px(6.))
+                        .children(targets.into_iter().map(|target| {
+                            let on = self.is_enabled(&target.name);
+                            let name = target.name.clone();
+                            div()
+                                .id(SharedString::from(format!("target-{}", target.id)))
+                                .h(px(27.))
+                                .pl(px(30.))
+                                .pr(px(10.))
+                                .flex()
+                                .items_center()
+                                .gap(px(9.))
+                                .rounded(px(6.))
+                                .cursor_pointer()
+                                .hover(|s| s.bg(t.bg3))
+                                .on_click(cx.listener(move |this, _, _, cx| this.toggle_target(&name, cx)))
+                                .child(checkbox(t, on))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .overflow_hidden()
+                                        .text_ellipsis()
+                                        .whitespace_nowrap()
+                                        .font_family(MONO)
+                                        .text_size(px(11.5))
+                                        .text_color(if on { t.fg } else { t.fg3 })
+                                        .child(target.name.clone()),
+                                )
+                        }))
                 });
                 div().flex().flex_col().child(header).children(rows).into_any_element()
             })
@@ -167,7 +185,10 @@ impl Workspace {
         let status_color = self.status_color(cx);
         let user = user_name();
         let initial = user.chars().next().map(|c| c.to_ascii_uppercase()).unwrap_or('?');
-        let version = env!("CARGO_PKG_VERSION").rsplit_once('.').map(|(v, _)| v).unwrap_or("0");
+        let version = env!("CARGO_PKG_VERSION")
+            .rsplit_once('.')
+            .map(|(v, _)| v)
+            .unwrap_or("0");
 
         let brand = div()
             .px(px(16.))
@@ -177,7 +198,12 @@ impl Workspace {
             .items_center()
             .gap(px(10.))
             .child(brand_mark(t, matches!(self.status, Status::Connecting)))
-            .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child("telelogs"))
+            .child(
+                div()
+                    .text_size(px(15.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("telelogs"),
+            )
             .child(
                 div()
                     .px(px(6.))
@@ -210,7 +236,12 @@ impl Workspace {
                     .flex()
                     .flex_col()
                     .gap(px(1.))
-                    .child(div().text_size(px(12.5)).font_weight(FontWeight::MEDIUM).child("local server"))
+                    .child(
+                        div()
+                            .text_size(px(12.5))
+                            .font_weight(FontWeight::MEDIUM)
+                            .child("local server"),
+                    )
                     .child(
                         div()
                             .font_family(MONO)
@@ -311,7 +342,12 @@ impl Workspace {
                     .flex()
                     .flex_col()
                     .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(user))
-                    .child(div().text_size(px(11.5)).text_color(t.fg3).child("Local workspace · Owner")),
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .text_color(t.fg3)
+                            .child("Local workspace · Owner"),
+                    ),
             )
             .child(icon(Icon::GearSix, 16., t.fg3));
 
@@ -325,7 +361,15 @@ impl Workspace {
             .border_r_1()
             .border_color(t.line)
             .child(brand)
-            .child(div().px(px(10.)).flex().flex_col().gap(px(6.)).child(server_card).child(search))
+            .child(
+                div()
+                    .px(px(10.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(server_card)
+                    .child(search),
+            )
             .child(nav)
             .child(sources_header)
             .child(

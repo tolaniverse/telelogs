@@ -127,8 +127,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Self {
         let filter_input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter by text or container…"));
-        let palette_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Type a command or search sources…"));
+        let palette_input = cx.new(|cx| InputState::new(window, cx).placeholder("Type a command or search sources…"));
         let subscriptions = vec![
             cx.subscribe(&filter_input, |this, _, event, cx| {
                 if let InputEvent::Change = event {
@@ -237,7 +236,9 @@ impl Workspace {
                     self.visible.clear();
                     self.selected = None;
                     for target in &targets {
-                        self.enabled.entry(target.name.clone()).or_insert(target.state == "running");
+                        self.enabled
+                            .entry(target.name.clone())
+                            .or_insert(target.state == "running");
                     }
                     self.targets = targets;
                     self.status = Status::Connected;
@@ -245,7 +246,10 @@ impl Workspace {
                 ClientEvent::Disconnected { reason } => self.status = Status::Disconnected { reason },
                 ClientEvent::Record(record) => {
                     self.note_target(&record);
-                    let entry = Entry { id: self.next_id, record };
+                    let entry = Entry {
+                        id: self.next_id,
+                        record,
+                    };
                     self.next_id += 1;
                     if self.passes(&entry) {
                         self.visible.push(self.entries.len());
@@ -269,7 +273,11 @@ impl Workspace {
         if self.targets.iter().any(|t| t.name == record.origin) {
             return;
         }
-        let id = record.labels.get("container_id").cloned().unwrap_or_else(|| record.origin.clone());
+        let id = record
+            .labels
+            .get("container_id")
+            .cloned()
+            .unwrap_or_else(|| record.origin.clone());
         self.targets.push(Target {
             id,
             name: record.origin.clone(),
@@ -291,7 +299,9 @@ impl Workspace {
     }
 
     fn rebuild_visible(&mut self) {
-        self.visible = (0..self.entries.len()).filter(|&i| self.passes(&self.entries[i])).collect();
+        self.visible = (0..self.entries.len())
+            .filter(|&i| self.passes(&self.entries[i]))
+            .collect();
     }
 
     fn scroll_to_end_if_following(&self) {
@@ -299,7 +309,9 @@ impl Workspace {
             return;
         }
         match self.view {
-            View::Rows => self.rows_scroll.scroll_to_item(self.visible.len() - 1, ScrollStrategy::Bottom),
+            View::Rows => self
+                .rows_scroll
+                .scroll_to_item(self.visible.len() - 1, ScrollStrategy::Bottom),
             View::Json => self.json_scroll.scroll_to_bottom(),
         }
     }
@@ -339,7 +351,8 @@ impl Workspace {
     }
 
     fn set_filter_text(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
-        self.filter_input.update(cx, |input, cx| input.set_value(text, window, cx));
+        self.filter_input
+            .update(cx, |input, cx| input.set_value(text, window, cx));
         self.refilter(cx);
     }
 
@@ -485,7 +498,12 @@ impl Workspace {
                     .text_color(t.fg2)
                     .child("telelogs")
                     .child(div().text_color(t.fg3).child("—"))
-                    .child(div().font_family(MONO).text_size(px(12.)).child(self.server_addr().to_string())),
+                    .child(
+                        div()
+                            .font_family(MONO)
+                            .text_size(px(12.))
+                            .child(self.server_addr().to_string()),
+                    ),
             )
             .child(div().flex_1())
             .child(
@@ -536,7 +554,11 @@ impl Render for Workspace {
                 }
             }))
             .on_action(cx.listener(|this, _: &ToggleJsonView, _, cx| {
-                let view = if this.view == View::Rows { View::Json } else { View::Rows };
+                let view = if this.view == View::Rows {
+                    View::Json
+                } else {
+                    View::Rows
+                };
                 this.set_view(view, cx);
             }))
             .capture_key_down(cx.listener(Self::capture_key))
@@ -549,12 +571,16 @@ impl Render for Workspace {
             .text_color(t.fg)
             .child(self.render_titlebar(cx))
             .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .child(self.render_sidebar(cx))
-                    .child(div().flex_1().min_w_0().h_full().flex().flex_col().bg(t.bg).child(screen)),
+                div().flex_1().min_h_0().flex().child(self.render_sidebar(cx)).child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .h_full()
+                        .flex()
+                        .flex_col()
+                        .bg(t.bg)
+                        .child(screen),
+                ),
             )
             .children(palette)
             .children(add)
@@ -574,7 +600,9 @@ fn modal(t: crate::theme::Tokens, panel: impl IntoElement, top: Option<f32>, cx:
             Some(top) => el.items_start().pt(px(top)),
             None => el.items_center(),
         })
-        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| this.close_overlays(window, cx)))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _, window, cx| this.close_overlays(window, cx)),
+        )
         .child(panel)
 }
-

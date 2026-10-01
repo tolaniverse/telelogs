@@ -116,7 +116,10 @@ pub struct Filter {
 
 impl Filter {
     pub fn new(text: &str) -> Self {
-        Filter { needle: text.to_lowercase(), ..Default::default() }
+        Filter {
+            needle: text.to_lowercase(),
+            ..Default::default()
+        }
     }
 
     pub fn is_empty(&self) -> bool {

@@ -176,7 +176,9 @@ impl Workspace {
                     .hover(|s| s.bg(t.bg2))
                     .on_click(cx.listener(move |this, _, _, cx| this.select(id, cx)))
                     .children(json::lines(&entry.record).iter().map(|line| {
-                        div().pl(px(line.depth as f32 * json::INDENT)).child(line.styled(t, color))
+                        div()
+                            .pl(px(line.depth as f32 * json::INDENT))
+                            .child(line.styled(t, color))
                     }))
             }))
     }
@@ -199,7 +201,12 @@ impl Workspace {
             .bg(t.bg)
             .text_size(px(13.))
             .child(icon(Icon::MagnifyingGlass, 14., t.fg3))
-            .child(div().flex_1().min_w_0().child(Input::new(&self.filter_input).appearance(false)))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(Input::new(&self.filter_input).appearance(false)),
+            )
             .when(has_filter, |el| {
                 el.child(
                     div()
@@ -221,24 +228,39 @@ impl Workspace {
             t,
             levels.into_iter().map(|(level, label, color)| {
                 let leading = color.map(|color| dot(color, 6.).into_any_element());
-                segment(t, SharedString::from(format!("level-{label}")), label.into(), leading, self.level == level)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.level = level;
-                        this.refilter(cx);
-                    }))
-                    .into_any_element()
+                segment(
+                    t,
+                    SharedString::from(format!("level-{label}")),
+                    label.into(),
+                    leading,
+                    self.level == level,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.level = level;
+                    this.refilter(cx);
+                }))
+                .into_any_element()
             }),
         );
 
-        let views = [(View::Rows, "Rows", Icon::Rows), (View::Json, "JSON", Icon::BracketsCurly)];
+        let views = [
+            (View::Rows, "Rows", Icon::Rows),
+            (View::Json, "JSON", Icon::BracketsCurly),
+        ];
         let view_control = segmented(
             t,
             views.into_iter().map(|(view, label, glyph)| {
                 let active = self.view == view;
                 let leading = icon(glyph, 14., if active { t.fg } else { t.fg2 }).into_any_element();
-                segment(t, SharedString::from(format!("view-{label}")), label.into(), Some(leading), active)
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_view(view, cx)))
-                    .into_any_element()
+                segment(
+                    t,
+                    SharedString::from(format!("view-{label}")),
+                    label.into(),
+                    Some(leading),
+                    active,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| this.set_view(view, cx)))
+                .into_any_element()
             }),
         );
 
@@ -300,7 +322,12 @@ impl Workspace {
             .gap(px(12.))
             .font_family(SANS)
             .child(icon(Icon::FunnelSimpleX, 34., t.fg3))
-            .child(div().text_size(px(15.)).font_weight(FontWeight::MEDIUM).child("No lines match"))
+            .child(
+                div()
+                    .text_size(px(15.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .child("No lines match"),
+            )
             .child(
                 div()
                     .max_w(px(320.))
@@ -322,48 +349,47 @@ impl Workspace {
         let addr = self.server_addr().to_string();
         let (mode, title, sub) = match &self.status {
             Status::Connected => return None,
-            Status::Connecting => {
-                (SphereMode::Connecting, format!("Connecting to {addr}"), "telelog-server · LogService.Tail".to_string())
-            }
+            Status::Connecting => (
+                SphereMode::Connecting,
+                format!("Connecting to {addr}"),
+                "telelog-server · LogService.Tail".to_string(),
+            ),
             Status::Disconnected { reason } => (
                 SphereMode::Disconnected,
                 "Server unreachable".to_string(),
-                format!("{reason} · retrying every {}s", crate::client::RECONNECT_DELAY.as_secs()),
+                format!(
+                    "{reason} · retrying every {}s",
+                    crate::client::RECONNECT_DELAY.as_secs()
+                ),
             ),
         };
         Some(
-            div()
-                .absolute()
-                .inset_0()
-                .bg(t.bg)
-                .occlude()
-                .child(dot_grid(t))
-                .child(
-                    div()
-                        .size_full()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .justify_center()
-                        .gap(px(6.))
-                        .child(sphere(t, mode, 260.))
-                        .child(div().text_size(px(16.)).font_weight(FontWeight::MEDIUM).child(title))
-                        .child(div().font_family(MONO).text_size(px(12.)).text_color(t.fg3).child(sub))
-                        .when(mode == SphereMode::Disconnected, |el| {
-                            el.child(
-                                div().mt(px(14.)).child(
-                                    primary_button(t, "retry", "Retry now", Some(Icon::ArrowClockwise))
-                                        .h(px(32.))
-                                        .text_size(px(13.))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.client.retry_now();
-                                            this.status = Status::Connecting;
-                                            cx.notify();
-                                        })),
-                                ),
-                            )
-                        }),
-                ),
+            div().absolute().inset_0().bg(t.bg).occlude().child(dot_grid(t)).child(
+                div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(6.))
+                    .child(sphere(t, mode, 260.))
+                    .child(div().text_size(px(16.)).font_weight(FontWeight::MEDIUM).child(title))
+                    .child(div().font_family(MONO).text_size(px(12.)).text_color(t.fg3).child(sub))
+                    .when(mode == SphereMode::Disconnected, |el| {
+                        el.child(
+                            div().mt(px(14.)).child(
+                                primary_button(t, "retry", "Retry now", Some(Icon::ArrowClockwise))
+                                    .h(px(32.))
+                                    .text_size(px(13.))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.client.retry_now();
+                                        this.status = Status::Connecting;
+                                        cx.notify();
+                                    })),
+                            ),
+                        )
+                    }),
+            ),
         )
     }
 
@@ -380,7 +406,11 @@ impl Workspace {
             ("Level", record.level.as_str().to_string()),
         ];
         let section_label = |label: &'static str| {
-            div().text_size(px(11.5)).font_weight(FontWeight::MEDIUM).text_color(t.fg3).child(label)
+            div()
+                .text_size(px(11.5))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(t.fg3)
+                .child(label)
         };
         let pretty = json::pretty(record);
         let origin = record.origin.clone();
@@ -419,13 +449,26 @@ impl Workspace {
                             .text_color(color)
                             .child(level_short(record.level)),
                     )
-                    .child(div().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).child("Log line"))
-                    .child(div().font_family(MONO).text_size(px(11.5)).text_color(t.fg3).child(format!("#{}", entry.id)))
+                    .child(
+                        div()
+                            .text_size(px(13.5))
+                            .font_weight(FontWeight::MEDIUM)
+                            .child("Log line"),
+                    )
+                    .child(
+                        div()
+                            .font_family(MONO)
+                            .text_size(px(11.5))
+                            .text_color(t.fg3)
+                            .child(format!("#{}", entry.id)),
+                    )
                     .child(div().flex_1())
-                    .child(icon_button(t, "close-detail", Icon::X, 15.).on_click(cx.listener(|this, _, _, cx| {
-                        this.selected = None;
-                        cx.notify();
-                    }))),
+                    .child(
+                        icon_button(t, "close-detail", Icon::X, 15.).on_click(cx.listener(|this, _, _, cx| {
+                            this.selected = None;
+                            cx.notify();
+                        })),
+                    ),
             )
             .child(
                 div()
@@ -450,43 +493,53 @@ impl Workspace {
                             .line_height(px(20.))
                             .child(record.body.clone()),
                     )
-                    .child(div().flex().flex_col().gap(px(10.)).text_size(px(12.5)).children(fields.into_iter().map(
-                        |(k, v)| {
-                            div()
-                                .flex()
-                                .gap(px(12.))
-                                .child(div().w(px(96.)).flex_none().text_color(t.fg3).child(k))
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .overflow_hidden()
-                                        .text_ellipsis()
-                                        .whitespace_nowrap()
-                                        .font_family(MONO)
-                                        .text_size(px(12.))
-                                        .child(v),
-                                )
-                        },
-                    )))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(10.))
+                            .text_size(px(12.5))
+                            .children(fields.into_iter().map(|(k, v)| {
+                                div()
+                                    .flex()
+                                    .gap(px(12.))
+                                    .child(div().w(px(96.)).flex_none().text_color(t.fg3).child(k))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .overflow_hidden()
+                                            .text_ellipsis()
+                                            .whitespace_nowrap()
+                                            .font_family(MONO)
+                                            .text_size(px(12.))
+                                            .child(v),
+                                    )
+                            })),
+                    )
                     .when(!record.labels.is_empty(), |el| {
                         el.child(
-                            div().flex().flex_col().gap(px(8.)).child(section_label("Labels")).child(
-                                div().flex().flex_wrap().gap(px(6.)).children(record.labels.iter().map(|(k, v)| {
-                                    div()
-                                        .flex()
-                                        .gap(px(4.))
-                                        .px(px(7.))
-                                        .py(px(3.))
-                                        .rounded(px(6.))
-                                        .border_1()
-                                        .border_color(t.line2)
-                                        .font_family(MONO)
-                                        .text_size(px(11.5))
-                                        .child(div().text_color(t.fg3).child(k.clone()))
-                                        .child(div().text_color(t.fg).child(v.clone()))
-                                })),
-                            ),
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(8.))
+                                .child(section_label("Labels"))
+                                .child(div().flex().flex_wrap().gap(px(6.)).children(record.labels.iter().map(
+                                    |(k, v)| {
+                                        div()
+                                            .flex()
+                                            .gap(px(4.))
+                                            .px(px(7.))
+                                            .py(px(3.))
+                                            .rounded(px(6.))
+                                            .border_1()
+                                            .border_color(t.line2)
+                                            .font_family(MONO)
+                                            .text_size(px(11.5))
+                                            .child(div().text_color(t.fg3).child(k.clone()))
+                                            .child(div().text_color(t.fg).child(v.clone()))
+                                    },
+                                ))),
                         )
                     })
                     .child(
@@ -539,7 +592,9 @@ impl Workspace {
                                     .line_height(px(18.))
                                     .whitespace_nowrap()
                                     .children(json::lines(record).iter().map(|line| {
-                                        div().pl(px(line.depth as f32 * json::INDENT)).child(line.styled(t, color))
+                                        div()
+                                            .pl(px(line.depth as f32 * json::INDENT))
+                                            .child(line.styled(t, color))
                                     })),
                             ),
                     ),
@@ -572,7 +627,11 @@ impl Workspace {
     fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = tokens(cx);
         let addr = self.server_addr();
-        let enabled = self.targets.iter().filter(|target| self.is_enabled(&target.name)).count();
+        let enabled = self
+            .targets
+            .iter()
+            .filter(|target| self.is_enabled(&target.name))
+            .count();
         let text = match &self.status {
             Status::Connected => format!("{addr} · {enabled} targets"),
             Status::Connecting => format!("Connecting to {addr}…"),
@@ -600,7 +659,12 @@ impl Workspace {
                 group_digits(self.entries.len())
             )))
             .child(div().text_color(t.line2).child("|"))
-            .child(div().flex_none().text_color(t.fg3).child(format!("buffer {}k", BUFFER / 1000)))
+            .child(
+                div()
+                    .flex_none()
+                    .text_color(t.fg3)
+                    .child(format!("buffer {}k", BUFFER / 1000)),
+            )
     }
 
     pub(super) fn render_stream(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {

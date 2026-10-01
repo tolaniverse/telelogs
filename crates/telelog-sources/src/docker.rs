@@ -97,10 +97,16 @@ impl DockerSource {
         ]);
         let events = self
             .docker
-            .events(Some(EventsOptions { filters: Some(filters), ..Default::default() }))
+            .events(Some(EventsOptions {
+                filters: Some(filters),
+                ..Default::default()
+            }))
             .map(|event| {
                 let event = event.context("watching Docker events")?;
-                Ok(event.actor.and_then(started_target).map(|target| (target, event.time.unwrap_or_else(unix_now))))
+                Ok(event
+                    .actor
+                    .and_then(started_target)
+                    .map(|target| (target, event.time.unwrap_or_else(unix_now))))
             })
             .boxed();
 
@@ -120,7 +126,9 @@ impl DockerSource {
 }
 
 fn unix_now() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 /// Builds a target from a container `start` event. Event attributes carry the container's
@@ -128,10 +136,18 @@ fn unix_now() -> i64 {
 fn started_target(actor: bollard::models::EventActor) -> Option<Target> {
     let id = actor.id?;
     let mut attributes = actor.attributes.unwrap_or_default();
-    let name = attributes.remove("name").unwrap_or_else(|| id.chars().take(12).collect());
+    let name = attributes
+        .remove("name")
+        .unwrap_or_else(|| id.chars().take(12).collect());
     let image = attributes.remove("image");
     let labels = target_labels(&id, image.as_deref(), attributes);
-    Some(Target { id, name, source: SourceKind::Docker, state: "running".into(), labels })
+    Some(Target {
+        id,
+        name,
+        source: SourceKind::Docker,
+        state: "running".into(),
+        labels,
+    })
 }
 
 /// A container that started, and when (Unix seconds).

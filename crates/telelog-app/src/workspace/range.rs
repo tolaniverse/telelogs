@@ -45,9 +45,16 @@ impl Workspace {
         if self.range_open {
             // Prefill the custom fields with the current window so it can be nudged.
             let (from, to) = self.range.bounds(SystemTime::now());
-            let (from, to) = (from.map(format_local).unwrap_or_default(), to.map(format_local).unwrap_or_default());
-            self.range_inputs.from.update(cx, |input, cx| input.set_value(from, window, cx));
-            self.range_inputs.to.update(cx, |input, cx| input.set_value(to, window, cx));
+            let (from, to) = (
+                from.map(format_local).unwrap_or_default(),
+                to.map(format_local).unwrap_or_default(),
+            );
+            self.range_inputs
+                .from
+                .update(cx, |input, cx| input.set_value(from, window, cx));
+            self.range_inputs
+                .to
+                .update(cx, |input, cx| input.set_value(to, window, cx));
         }
         cx.notify();
     }
@@ -61,7 +68,11 @@ impl Workspace {
                 self.range_error = Some("\"From\" is after \"To\".".into());
             }
             (Ok(from), Ok(to)) => {
-                let range = if from.is_none() && to.is_none() { TimeRange::All } else { TimeRange::Between { from, to } };
+                let range = if from.is_none() && to.is_none() {
+                    TimeRange::All
+                } else {
+                    TimeRange::Between { from, to }
+                };
                 self.set_range(range, cx);
                 return;
             }
@@ -98,7 +109,11 @@ impl Workspace {
             .cursor_pointer()
             .hover(|s| s.bg(t.bg3))
             .on_click(cx.listener(|this, _, window, cx| this.open_range(window, cx)))
-            .child(icon(Icon::ClockCounterClockwise, 14., if active { t.fg } else { t.fg2 }))
+            .child(icon(
+                Icon::ClockCounterClockwise,
+                14.,
+                if active { t.fg } else { t.fg2 },
+            ))
             .child(self.range.label())
             .child(icon(Icon::CaretDown, 11., t.fg3));
 
@@ -107,7 +122,16 @@ impl Workspace {
             .flex_none()
             .child(button)
             .when(self.range_open, |el| {
-                el.child(deferred(div().absolute().top(px(38.)).left_0().child(self.render_range_panel(t, cx))).with_priority(1))
+                el.child(
+                    deferred(
+                        div()
+                            .absolute()
+                            .top(px(38.))
+                            .left_0()
+                            .child(self.render_range_panel(t, cx)),
+                    )
+                    .with_priority(1),
+                )
             })
             .into_any_element()
     }
@@ -137,7 +161,14 @@ impl Workspace {
                 .flex()
                 .items_center()
                 .gap(px(10.))
-                .child(div().w(px(36.)).flex_none().text_size(px(12.)).text_color(t.fg3).child(label))
+                .child(
+                    div()
+                        .w(px(36.))
+                        .flex_none()
+                        .text_size(px(12.))
+                        .text_color(t.fg3)
+                        .child(label),
+                )
                 .child(
                     div()
                         .flex_1()
@@ -156,7 +187,14 @@ impl Workspace {
         };
 
         let section = |label: &'static str| {
-            div().px(px(10.)).pt(px(8.)).pb(px(4.)).text_size(px(11.5)).font_weight(FontWeight::MEDIUM).text_color(t.fg3).child(label)
+            div()
+                .px(px(10.))
+                .pt(px(8.))
+                .pb(px(4.))
+                .text_size(px(11.5))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(t.fg3)
+                .child(label)
         };
 
         div()
@@ -189,7 +227,11 @@ impl Workspace {
                     .gap(px(8.))
                     .child(field("From", &self.range_inputs.from))
                     .child(field("To", &self.range_inputs.to))
-                    .children(self.range_error.clone().map(|e| div().text_size(px(12.)).text_color(t.err).child(e)))
+                    .children(
+                        self.range_error
+                            .clone()
+                            .map(|e| div().text_size(px(12.)).text_color(t.err).child(e)),
+                    )
                     .child(
                         div()
                             .flex()

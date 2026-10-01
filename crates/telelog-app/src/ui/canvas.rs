@@ -1,7 +1,6 @@
 //! Canvas animations from the design: the dot-matrix brand mark, the rotating dot sphere,
 //! and the static dot grid backdrop.
 
-
 use std::sync::OnceLock;
 use std::time::Instant;
 
@@ -39,7 +38,11 @@ pub fn brand_mark(t: Tokens, animate: bool) -> impl IntoElement {
             for gy in 0..5 {
                 for gx in 0..5 {
                     let on = gy == 0 || gx == 2;
-                    let wave = if animate { 0.5 + 0.5 * (time * 2.4 - (gx + gy) as f32 * 0.75).sin() } else { 1. };
+                    let wave = if animate {
+                        0.5 + 0.5 * (time * 2.4 - (gx + gy) as f32 * 0.75).sin()
+                    } else {
+                        1.
+                    };
                     let alpha = if on { 0.5 + 0.5 * wave } else { 0.1 + 0.08 * wave };
                     let center = point(
                         bounds.origin.x + px(gx as f32 * s + s / 2.),
@@ -122,7 +125,11 @@ pub fn sphere(t: Tokens, mode: SphereMode, diameter: f32) -> impl IntoElement {
             let b: f32 = 0.38;
             let (ca, sa, cb, sb) = (a.cos(), a.sin(), b.cos(), b.sin());
             let scan_y = (time * if connecting { 1.6 } else { 0.9 }).sin();
-            let breathe = if connecting && !disconnected { 1. + 0.035 * (time * 3.).sin() } else { 1. };
+            let breathe = if connecting && !disconnected {
+                1. + 0.035 * (time * 3.).sin()
+            } else {
+                1.
+            };
 
             for (i, p) in sphere_points().iter().enumerate() {
                 let x1 = p[0] * ca + p[2] * sa;
@@ -130,7 +137,11 @@ pub fn sphere(t: Tokens, mode: SphereMode, diameter: f32) -> impl IntoElement {
                 let y2 = p[1] * cb - z1 * sb;
                 let z2 = p[1] * sb + z1 * cb;
                 let depth = (z2 + 1.) / 2.;
-                let wobble = if disconnected { 1. + 0.22 * (time * 0.9 + i as f32 * 1.7).sin() } else { 1. };
+                let wobble = if disconnected {
+                    1. + 0.22 * (time * 0.9 + i as f32 * 1.7).sin()
+                } else {
+                    1.
+                };
                 let m = breathe * wobble;
                 let scan = (-(y2 - scan_y).powi(2) * 36.).exp();
                 let alpha = (0.06 + 0.45 * depth + 0.6 * scan * depth).min(1.);

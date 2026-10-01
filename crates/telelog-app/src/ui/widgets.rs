@@ -39,13 +39,22 @@ pub fn segment(
         .font_weight(FontWeight::MEDIUM)
         .cursor_pointer()
         .when(active, |el| el.bg(t.bg).border_color(t.line2).text_color(t.fg))
-        .when(!active, |el| el.border_color(t.ink(0.)).text_color(t.fg2).hover(|s| s.text_color(t.fg)))
+        .when(!active, |el| {
+            el.border_color(t.ink(0.))
+                .text_color(t.fg2)
+                .hover(|s| s.text_color(t.fg))
+        })
         .children(leading)
         .child(label)
 }
 
 /// Filled, inverted button: white on dark, black on light.
-pub fn primary_button(t: Tokens, id: impl Into<ElementId>, label: impl Into<SharedString>, glyph: Option<Icon>) -> Stateful<Div> {
+pub fn primary_button(
+    t: Tokens,
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    glyph: Option<Icon>,
+) -> Stateful<Div> {
     div()
         .id(id)
         .h(px(34.))
@@ -66,7 +75,12 @@ pub fn primary_button(t: Tokens, id: impl Into<ElementId>, label: impl Into<Shar
         .child(label.into())
 }
 
-pub fn outline_button(t: Tokens, id: impl Into<ElementId>, label: impl Into<SharedString>, glyph: Option<Icon>) -> Stateful<Div> {
+pub fn outline_button(
+    t: Tokens,
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    glyph: Option<Icon>,
+) -> Stateful<Div> {
     div()
         .id(id)
         .h(px(32.))
@@ -185,7 +199,12 @@ pub fn checkbox(t: Tokens, on: bool) -> Div {
 }
 
 /// Page header used by Sources, Storage and Team.
-pub fn page_header(t: Tokens, title: &'static str, subtitle: impl Into<SharedString>, action: Option<AnyElement>) -> Div {
+pub fn page_header(
+    t: Tokens,
+    title: &'static str,
+    subtitle: impl Into<SharedString>,
+    action: Option<AnyElement>,
+) -> Div {
     div()
         .px(px(36.))
         .pt(px(32.))
@@ -201,7 +220,13 @@ pub fn page_header(t: Tokens, title: &'static str, subtitle: impl Into<SharedStr
                 .flex()
                 .flex_col()
                 .gap(px(6.))
-                .child(div().text_size(px(24.)).font_weight(FontWeight::SEMIBOLD).text_color(t.fg).child(title))
+                .child(
+                    div()
+                        .text_size(px(24.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(t.fg)
+                        .child(title),
+                )
                 .child(div().text_size(px(14.)).text_color(t.fg2).child(subtitle.into())),
         )
         .children(action)
@@ -209,5 +234,9 @@ pub fn page_header(t: Tokens, title: &'static str, subtitle: impl Into<SharedStr
 
 /// A bordered, rounded table container.
 pub fn card(t: Tokens) -> Div {
-    div().rounded(px(10.)).border_1().border_color(t.line2).overflow_hidden()
+    div()
+        .rounded(px(10.))
+        .border_1()
+        .border_color(t.line2)
+        .overflow_hidden()
 }
