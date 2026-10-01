@@ -75,6 +75,21 @@ pub struct Entry {
     pub record: LogRecord,
 }
 
+/// Lines fetched from the server's archive bucket for the current time range.
+pub enum ArchiveState {
+    /// No bucket, or the range doesn't reach past the live buffer.
+    Off,
+    Loading,
+    Loaded {
+        lines: usize,
+        truncated: bool,
+    },
+    Failed(String),
+}
+
+/// Archived entries get ids from their own range so they never collide with live ones.
+const ARCHIVED_IDS: u64 = 1 << 62;
+
 pub struct Workspace {
     server: String,
     client: Client,
@@ -87,7 +102,16 @@ pub struct Workspace {
 
     entries: Vec<Entry>,
     next_id: u64,
-    /// Indices into `entries` that pass the filters.
+    /// Oldest timestamp among `entries`; archived lines at or after it are already live.
+    live_oldest: Option<SystemTime>,
+    /// Lines from the archive bucket, older than the live buffer, shown before it.
+    archived: Vec<Entry>,
+    next_archived_id: u64,
+    archive: ArchiveState,
+    /// Number of the newest archive request; older answers are ignored.
+    archive_request: u64,
+    storage: Option<Result<telelog_proto::v1::StorageInfo, String>>,
+    /// Indices into `archived` followed by `entries` (see [`Workspace::entry`]) that pass the filters.
     visible: Vec<usize>,
     filter: Filter,
     level: LevelFilter,
@@ -183,6 +207,12 @@ impl Workspace {
             open_groups: HashSet::from([SourceKind::Docker, SourceKind::Kubernetes]),
             entries: Vec::new(),
             next_id: 1,
+            live_oldest: None,
+            archived: Vec::new(),
+            next_archived_id: ARCHIVED_IDS,
+            archive: ArchiveState::Off,
+            archive_request: 0,
+            storage: None,
             visible: Vec::new(),
             filter: Filter::default(),
             level: LevelFilter::All,
@@ -223,6 +253,7 @@ impl Workspace {
     }
 
     fn apply(&mut self, batch: Vec<ClientEvent>, cx: &mut Context<Self>) {
+        let mut rebuild = false;
         for event in batch {
             match event {
                 ClientEvent::Connecting => {
@@ -233,8 +264,10 @@ impl Workspace {
                 ClientEvent::Connected { targets } => {
                     // The server resends backlog on reconnect, so start fresh.
                     self.entries.clear();
-                    self.visible.clear();
+                    self.live_oldest = None;
                     self.selected = None;
+                    rebuild = true;
+                    self.client.fetch_storage();
                     for target in &targets {
                         self.enabled
                             .entry(target.name.clone())
@@ -252,10 +285,47 @@ impl Workspace {
                         record,
                     };
                     self.next_id += 1;
+                    let timestamp = entry.record.timestamp;
+                    if self.live_oldest.is_none_or(|oldest| timestamp < oldest) {
+                        self.live_oldest = Some(timestamp);
+                        // The boundary hiding archived duplicates moved.
+                        rebuild |= !self.archived.is_empty();
+                    }
                     if self.passes(&entry) {
-                        self.visible.push(self.entries.len());
+                        self.visible.push(self.archived.len() + self.entries.len());
                     }
                     self.entries.push(entry);
+                }
+                ClientEvent::Archive { request, result } if request == self.archive_request => {
+                    match result {
+                        Ok(records) => {
+                            let lines = records.len();
+                            self.archived = records
+                                .into_iter()
+                                .map(|record| {
+                                    self.next_archived_id += 1;
+                                    Entry {
+                                        id: self.next_archived_id,
+                                        record,
+                                    }
+                                })
+                                .collect();
+                            self.archive = ArchiveState::Loaded {
+                                lines,
+                                truncated: lines >= crate::client::ARCHIVE_LIMIT as usize,
+                            };
+                        }
+                        Err(e) => self.archive = ArchiveState::Failed(e),
+                    }
+                    rebuild = true;
+                }
+                ClientEvent::Archive { .. } => {}
+                ClientEvent::Storage(result) => {
+                    let enabled = matches!(&result, Ok(info) if info.enabled);
+                    self.storage = Some(result);
+                    if enabled && matches!(self.archive, ArchiveState::Off) {
+                        self.load_archive();
+                    }
                 }
             }
         }
@@ -263,6 +333,10 @@ impl Workspace {
         if self.entries.len() > BUFFER {
             let excess = self.entries.len() - BUFFER;
             self.entries.drain(..excess);
+            self.live_oldest = self.entries.iter().map(|e| e.record.timestamp).min();
+            rebuild = true;
+        }
+        if rebuild {
             self.rebuild_visible();
         }
         self.scroll_to_end_if_following();
@@ -323,10 +397,50 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The `i`th line of the combined list: archived lines first, then the live buffer.
+    pub(super) fn entry(&self, i: usize) -> &Entry {
+        match i.checked_sub(self.archived.len()) {
+            Some(live) => &self.entries[live],
+            None => &self.archived[i],
+        }
+    }
+
     fn rebuild_visible(&mut self) {
-        self.visible = (0..self.entries.len())
-            .filter(|&i| self.passes(&self.entries[i]))
-            .collect();
+        let archived = self
+            .archived
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| self.live_oldest.is_none_or(|oldest| e.record.timestamp < oldest) && self.passes(e))
+            .map(|(i, _)| i);
+        let live = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| self.passes(e))
+            .map(|(i, _)| self.archived.len() + i);
+        self.visible = archived.chain(live).collect();
+    }
+
+    /// Fetches the part of the time range older than the live buffer from the archive bucket.
+    pub(super) fn load_archive(&mut self) {
+        self.archive_request += 1;
+        self.archived.clear();
+        self.archive = ArchiveState::Off;
+        let bucket = matches!(&self.storage, Some(Ok(info)) if info.enabled);
+        if !bucket || self.range == TimeRange::All {
+            return;
+        }
+        let now = SystemTime::now();
+        let (from, to) = self.range.bounds(now);
+        let mut to = to.unwrap_or(now);
+        if let Some(oldest) = self.live_oldest {
+            to = to.min(oldest.checked_sub(Duration::from_nanos(1)).unwrap_or(oldest));
+        }
+        if from.is_some_and(|from| from > to) {
+            return;
+        }
+        self.archive = ArchiveState::Loading;
+        self.client.query_archive(self.archive_request, from, to);
     }
 
     fn scroll_to_end_if_following(&self) {
@@ -391,6 +505,9 @@ impl Workspace {
     }
 
     fn go(&mut self, screen: Screen, cx: &mut Context<Self>) {
+        if screen == Screen::Storage {
+            self.client.fetch_storage();
+        }
         self.screen = screen;
         self.selected = None;
         cx.notify();
@@ -404,6 +521,10 @@ impl Workspace {
 
     fn clear_stream(&mut self, cx: &mut Context<Self>) {
         self.entries.clear();
+        self.live_oldest = None;
+        self.archived.clear();
+        self.archive = ArchiveState::Off;
+        self.archive_request += 1;
         self.visible.clear();
         self.selected = None;
         cx.notify();
@@ -411,9 +532,14 @@ impl Workspace {
 
     fn selected_entry(&self) -> Option<&Entry> {
         let id = self.selected?;
-        // Ids are increasing, so the entry can be found by binary search.
-        let ix = self.entries.binary_search_by_key(&id, |e| e.id).ok()?;
-        self.entries.get(ix)
+        // Ids are increasing within each list, so the entry can be found by binary search.
+        let list = if id > ARCHIVED_IDS {
+            &self.archived
+        } else {
+            &self.entries
+        };
+        let ix = list.binary_search_by_key(&id, |e| e.id).ok()?;
+        list.get(ix)
     }
 
     /// Lines `origin` wrote during the last minute (by log timestamp, so backlog doesn't count).

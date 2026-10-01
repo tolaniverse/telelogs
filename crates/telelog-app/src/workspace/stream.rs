@@ -88,7 +88,7 @@ impl Workspace {
     fn render_rows(&mut self, range: Range<usize>, _: &mut Window, cx: &mut Context<Self>) -> Vec<Stateful<Div>> {
         let t = tokens(cx);
         range
-            .filter_map(|ix| self.visible.get(ix).map(|&i| (ix, &self.entries[i])))
+            .filter_map(|ix| self.visible.get(ix).map(|&i| (ix, self.entry(i))))
             .map(|(ix, entry)| {
                 let record = &entry.record;
                 let (bg, edge) = self.row_style(t, entry);
@@ -160,7 +160,7 @@ impl Workspace {
             .line_height(px(19.))
             .py(px(6.))
             .children(self.visible[start..].iter().map(|&i| {
-                let entry = &self.entries[i];
+                let entry = self.entry(i);
                 let (bg, edge) = self.row_style(t, entry);
                 let id = entry.id;
                 let color = level_color(t, entry.record.level);
@@ -653,10 +653,20 @@ impl Workspace {
             .child(dot(self.status_color(cx), 7.))
             .child(div().overflow_hidden().text_ellipsis().whitespace_nowrap().child(text))
             .child(div().flex_1())
+            .children(self.archive_label().map(|label| {
+                div()
+                    .flex_none()
+                    .text_color(if matches!(self.archive, super::ArchiveState::Failed(_)) {
+                        t.err
+                    } else {
+                        t.fg3
+                    })
+                    .child(label)
+            }))
             .child(div().flex_none().text_color(t.fg3).child(format!(
                 "{} / {} lines",
                 group_digits(self.visible.len()),
-                group_digits(self.entries.len())
+                group_digits(self.archived.len() + self.entries.len())
             )))
             .child(div().text_color(t.line2).child("|"))
             .child(
@@ -665,6 +675,19 @@ impl Workspace {
                     .text_color(t.fg3)
                     .child(format!("buffer {}k", BUFFER / 1000)),
             )
+    }
+
+    fn archive_label(&self) -> Option<String> {
+        match &self.archive {
+            super::ArchiveState::Off => None,
+            super::ArchiveState::Loading => Some("loading from bucket…".into()),
+            super::ArchiveState::Loaded { lines, truncated } => Some(format!(
+                "{}{} from bucket",
+                if *truncated { "newest " } else { "" },
+                group_digits(*lines)
+            )),
+            super::ArchiveState::Failed(e) => Some(format!("bucket: {e}")),
+        }
     }
 
     pub(super) fn render_stream(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {

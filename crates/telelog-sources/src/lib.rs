@@ -2,4 +2,4 @@
 
 pub mod docker;
 
-pub use docker::DockerSource;
+pub use docker::{DockerSource, LiveStart};

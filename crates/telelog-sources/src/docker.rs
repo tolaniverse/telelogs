@@ -12,6 +12,15 @@ use bollard::query_parameters::{EventsOptions, ListContainersOptionsBuilder, Log
 use futures::stream::{self, BoxStream, SelectAll, StreamExt};
 use telelog_core::{Level, LogRecord, SourceKind, Stream, Target};
 
+/// Where a live tail begins for containers that are already running.
+#[derive(Debug, Clone, Copy)]
+pub enum LiveStart {
+    /// The last `n` lines of each container.
+    Backlog(u32),
+    /// Every line since this Unix time (seconds), e.g. to resume after a restart.
+    Since(i64),
+}
+
 #[derive(Clone)]
 pub struct DockerSource {
     docker: Docker,
@@ -125,7 +134,7 @@ impl DockerSource {
             .boxed()
     }
 
-    pub async fn tail_live(&self, backlog: u32) -> Result<BoxStream<'static, Result<LogRecord>>> {
+    pub async fn tail_live(&self, start: LiveStart) -> Result<BoxStream<'static, Result<LogRecord>>> {
         // Subscribe before listing so a container that starts in between isn't missed.
         let filters = HashMap::from([
             ("type".to_string(), vec!["container".to_string()]),
@@ -155,7 +164,10 @@ impl DockerSource {
             listed_at: unix_now(),
         };
         for target in &running {
-            live.tails.push(self.tail(target, backlog));
+            live.tails.push(match start {
+                LiveStart::Backlog(backlog) => self.tail(target, backlog),
+                LiveStart::Since(since) => self.tail_since(target, since),
+            });
         }
         Ok(live.boxed())
     }

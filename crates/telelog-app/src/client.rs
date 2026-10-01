@@ -3,7 +3,7 @@
 //! GPUI runs its own executor, and tonic needs tokio, so the two meet over a channel.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
@@ -26,18 +26,90 @@ pub enum ClientEvent {
     Disconnected {
         reason: String,
     },
+    /// Answer to [`Client::query_archive`] number `request`.
+    Archive {
+        request: u64,
+        result: Result<Vec<LogRecord>, String>,
+    },
+    /// Answer to [`Client::fetch_storage`].
+    Storage(Result<v1::StorageInfo, String>),
 }
 
-/// Lets the UI cut the reconnect delay short.
+/// Most archived lines fetched for one time range.
+pub const ARCHIVE_LIMIT: u32 = 20_000;
+
+/// Handle for one-off requests and for cutting the reconnect delay short.
 #[derive(Clone)]
 pub struct Client {
     retry: Arc<Notify>,
+    connection: Connection,
+    runtime: tokio::runtime::Handle,
+    tx: UnboundedSender<ClientEvent>,
 }
 
 impl Client {
     pub fn retry_now(&self) {
         self.retry.notify_one();
     }
+
+    /// Asks the server's archive for lines in `[from, to]`; the answer arrives as
+    /// [`ClientEvent::Archive`] with the same `request` number.
+    pub fn query_archive(&self, request: u64, from: Option<SystemTime>, to: SystemTime) {
+        let (connection, tx) = (self.connection.clone(), self.tx.clone());
+        self.runtime.spawn(async move {
+            let result = async {
+                let mut client = connect(&connection).await?;
+                let mut stream = client
+                    .query(v1::QueryRequest {
+                        from: from.map(telelog_proto::to_timestamp),
+                        to: Some(telelog_proto::to_timestamp(to)),
+                        limit: ARCHIVE_LIMIT,
+                        ..Default::default()
+                    })
+                    .await?
+                    .into_inner();
+                let mut records = Vec::new();
+                while let Some(record) = stream.next().await {
+                    records.push(record?.into());
+                }
+                anyhow::Ok(records)
+            }
+            .await
+            .map_err(|e| describe_request(&e));
+            let _ = tx.unbounded_send(ClientEvent::Archive { request, result });
+        });
+    }
+
+    /// Fetches bucket stats; the answer arrives as [`ClientEvent::Storage`].
+    pub fn fetch_storage(&self) {
+        let (connection, tx) = (self.connection.clone(), self.tx.clone());
+        self.runtime.spawn(async move {
+            let result = async {
+                let mut client = connect(&connection).await?;
+                anyhow::Ok(client.get_storage(v1::GetStorageRequest {}).await?.into_inner())
+            }
+            .await
+            .map_err(|e| describe_request(&e));
+            let _ = tx.unbounded_send(ClientEvent::Storage(result));
+        });
+    }
+}
+
+/// For one-off requests, the server's own message reads best ("no archive bucket configured").
+fn describe_request(e: &anyhow::Error) -> String {
+    match e.downcast_ref::<tonic::Status>() {
+        Some(status) if status.code() != tonic::Code::Unauthenticated => status.message().to_string(),
+        _ => describe(e),
+    }
+}
+
+async fn connect(connection: &Connection) -> anyhow::Result<telelog_proto::auth::Client> {
+    telelog_proto::auth::connect(
+        &connection.server,
+        connection.token.as_deref(),
+        connection.ca_pem.as_deref(),
+    )
+    .await
 }
 
 /// Where and how to reach telelog-server.
@@ -53,7 +125,12 @@ pub struct Connection {
 pub fn spawn(runtime: &tokio::runtime::Handle, connection: Connection) -> (Client, UnboundedReceiver<ClientEvent>) {
     let (tx, rx) = unbounded();
     let retry = Arc::new(Notify::new());
-    let client = Client { retry: retry.clone() };
+    let client = Client {
+        retry: retry.clone(),
+        connection: connection.clone(),
+        runtime: runtime.clone(),
+        tx: tx.clone(),
+    };
     runtime.spawn(async move {
         while !tx.is_closed() {
             let _ = tx.unbounded_send(ClientEvent::Connecting);
@@ -90,12 +167,7 @@ fn describe(e: &anyhow::Error) -> String {
 }
 
 async fn tail_once(connection: &Connection, tx: &UnboundedSender<ClientEvent>) -> anyhow::Result<()> {
-    let mut client = telelog_proto::auth::connect(
-        &connection.server,
-        connection.token.as_deref(),
-        connection.ca_pem.as_deref(),
-    )
-    .await?;
+    let mut client = connect(connection).await?;
 
     // Subscribe to state changes before listing, so none fall in the gap. Replaying an event
     // that the listing already reflects is harmless: each one carries the final state.

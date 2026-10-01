@@ -12,6 +12,11 @@ service LogService {
   rpc Tail(TailRequest) returns (stream LogRecord);
   // Streams a target, with its new state, whenever one starts, stops or is removed.
   rpc WatchTargets(WatchTargetsRequest) returns (stream Target);
+  // Returns archived lines from the bucket, oldest first. FAILED_PRECONDITION when the server
+  // has no archive configured.
+  rpc Query(QueryRequest) returns (stream LogRecord);
+  // Describes the archive bucket: where it is, how much it holds, and how it's doing.
+  rpc GetStorage(GetStorageRequest) returns (StorageInfo);
 }
 
 enum SourceKind {
@@ -70,4 +75,37 @@ message LogRecord {
   Level level = 5;
   string body = 6;
   map<string, string> labels = 7;
+}
+
+message QueryRequest {
+  // Inclusive bounds; unset means unbounded (to defaults to now).
+  google.protobuf.Timestamp from = 1;
+  google.protobuf.Timestamp to = 2;
+  // Case-insensitive substring of the body or origin.
+  string text = 3;
+  // Lowest level to include; LEVEL_UNKNOWN includes everything.
+  Level min_level = 4;
+  // Most lines to return (the newest in the range). 0 uses the server default.
+  uint32 limit = 5;
+}
+
+message GetStorageRequest {}
+
+message StorageInfo {
+  bool enabled = 1;
+  // Bucket URL without credentials.
+  string location = 2;
+  string provider = 3;
+  uint64 objects = 4;
+  uint64 bytes = 5;
+  // True when the bucket held more objects than were counted.
+  bool truncated = 6;
+  // Start of the oldest archived day.
+  google.protobuf.Timestamp oldest = 7;
+  google.protobuf.Timestamp last_flush = 8;
+  string last_error = 9;
+  uint64 lines_archived = 10;
+  // 0 keeps everything.
+  uint32 retention_days = 11;
+  uint32 flush_seconds = 12;
 }

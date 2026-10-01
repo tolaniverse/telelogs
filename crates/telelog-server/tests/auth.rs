@@ -54,6 +54,7 @@ async fn plaintext_server_requires_the_token() {
     let server = start(Config {
         token: Some(TOKEN.into()),
         tls: None,
+        archive: None,
     })
     .await;
     let endpoint = format!("http://127.0.0.1:{}", server.port);
@@ -68,7 +69,12 @@ async fn plaintext_server_requires_the_token() {
 
 #[tokio::test]
 async fn server_without_token_is_open() {
-    let server = start(Config { token: None, tls: None }).await;
+    let server = start(Config {
+        token: None,
+        tls: None,
+        archive: None,
+    })
+    .await;
     let endpoint = format!("http://127.0.0.1:{}", server.port);
     assert!(passed_auth(list_targets(&endpoint, None, None).await));
 }
@@ -96,6 +102,7 @@ async fn tls_server_with_token() {
     let server = start(Config {
         token: Some(TOKEN.into()),
         tls: Some(tls),
+        archive: None,
     })
     .await;
     let endpoint = format!("https://localhost:{}", server.port);

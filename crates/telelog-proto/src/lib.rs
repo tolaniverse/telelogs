@@ -77,7 +77,7 @@ impl From<v1::Level> for core::Level {
     }
 }
 
-fn to_timestamp(t: SystemTime) -> prost_types::Timestamp {
+pub fn to_timestamp(t: SystemTime) -> prost_types::Timestamp {
     let d = t.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
     prost_types::Timestamp {
         seconds: d.as_secs() as i64,
@@ -85,7 +85,7 @@ fn to_timestamp(t: SystemTime) -> prost_types::Timestamp {
     }
 }
 
-fn from_timestamp(t: Option<prost_types::Timestamp>) -> SystemTime {
+pub fn from_timestamp(t: Option<prost_types::Timestamp>) -> SystemTime {
     t.map(|t| SystemTime::UNIX_EPOCH + Duration::new(t.seconds.max(0) as u64, t.nanos.max(0) as u32))
         .unwrap_or(SystemTime::UNIX_EPOCH)
 }

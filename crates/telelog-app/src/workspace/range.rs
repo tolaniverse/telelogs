@@ -36,6 +36,7 @@ impl Workspace {
         if !range.includes_now() {
             self.follow = false;
         }
+        self.load_archive();
         self.refilter(cx);
     }
 
@@ -264,10 +265,17 @@ impl Workspace {
                     .bg(t.bg2)
                     .text_size(px(11.5))
                     .text_color(t.fg3)
-                    .child(format!(
-                        "Searches the {}k-line buffer in memory. Older logs arrive with buckets.",
-                        BUFFER / 1000
-                    )),
+                    .child(match &self.storage {
+                        Some(Ok(info)) if info.enabled => format!(
+                            "Searches the {}k-line buffer, then {} for anything older.",
+                            BUFFER / 1000,
+                            info.location
+                        ),
+                        _ => format!(
+                            "Searches the {}k-line buffer in memory. Start the server with --archive-url to keep more.",
+                            BUFFER / 1000
+                        ),
+                    }),
             )
     }
 }

@@ -1,8 +1,11 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
+use telelog_server::archive::Archive;
 use telelog_server::{Config, TlsFiles, auth};
 use telelog_sources::DockerSource;
 use tokio::net::TcpListener;
@@ -33,6 +36,19 @@ struct Args {
     /// Listen beyond localhost without a token (only behind a proxy that authenticates).
     #[arg(long)]
     allow_unauthenticated: bool,
+
+    /// Bucket to archive every log line to: s3://bucket/prefix (also R2/MinIO via AWS_ENDPOINT),
+    /// gs://bucket/prefix, or file:///path. Credentials come from the provider's usual env vars.
+    #[arg(long, env = "TELELOG_ARCHIVE_URL")]
+    archive_url: Option<String>,
+
+    /// Seconds between archive flushes (1 to 3600).
+    #[arg(long, env = "TELELOG_ARCHIVE_FLUSH_SECS", default_value_t = 60, value_parser = clap::value_parser!(u64).range(1..=3600))]
+    archive_flush_secs: u64,
+
+    /// Days to keep archived logs; 0 keeps them forever.
+    #[arg(long, env = "TELELOG_RETENTION_DAYS", default_value_t = 90)]
+    retention_days: u32,
 }
 
 #[derive(Subcommand)]
@@ -67,16 +83,27 @@ async fn main() -> Result<()> {
         tracing::warn!("{warning}");
     }
 
+    let archive = match &args.archive_url {
+        Some(url) => {
+            let mut archive = Archive::open(url)?;
+            archive.flush_every = Duration::from_secs(args.archive_flush_secs);
+            archive.retention_days = args.retention_days;
+            Some(Arc::new(archive))
+        }
+        None => None,
+    };
+
     let docker = DockerSource::connect()?;
     let listener = TcpListener::bind(args.listen).await?;
     tracing::info!(
         listen = %args.listen,
         auth = if token.is_some() { "token" } else { "none" },
         tls = tls.is_some(),
+        archive = archive.as_ref().map_or("off".to_string(), |a| a.location.clone()),
         "telelog-server started"
     );
     let shutdown = async {
         let _ = tokio::signal::ctrl_c().await;
     };
-    telelog_server::serve(listener, Config { token, tls }, docker, shutdown).await
+    telelog_server::serve(listener, Config { token, tls, archive }, docker, shutdown).await
 }

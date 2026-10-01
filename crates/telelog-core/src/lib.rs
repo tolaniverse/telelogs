@@ -30,6 +30,16 @@ pub enum Level {
 }
 
 impl SourceKind {
+    /// The inverse of [`SourceKind::as_str`].
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "docker" => Some(SourceKind::Docker),
+            "kubernetes" => Some(SourceKind::Kubernetes),
+            "vm" => Some(SourceKind::Vm),
+            _ => None,
+        }
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             SourceKind::Docker => "docker",
@@ -40,6 +50,15 @@ impl SourceKind {
 }
 
 impl Stream {
+    /// The inverse of [`Stream::as_str`].
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "stdout" => Some(Stream::Stdout),
+            "stderr" => Some(Stream::Stderr),
+            _ => None,
+        }
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Stream::Stdout => "stdout",
@@ -49,6 +68,19 @@ impl Stream {
 }
 
 impl Level {
+    /// The inverse of [`Level::as_str`].
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "unknown" => Some(Level::Unknown),
+            "trace" => Some(Level::Trace),
+            "debug" => Some(Level::Debug),
+            "info" => Some(Level::Info),
+            "warn" => Some(Level::Warn),
+            "error" => Some(Level::Error),
+            _ => None,
+        }
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Level::Unknown => "unknown",
@@ -171,6 +203,27 @@ mod tests {
         assert!(Filter::new("API").matches(&r));
         assert!(!Filter::new("postgres").matches(&r));
         assert!(Filter::new("").matches(&r));
+    }
+
+    #[test]
+    fn enum_names_round_trip() {
+        for kind in [SourceKind::Docker, SourceKind::Kubernetes, SourceKind::Vm] {
+            assert_eq!(SourceKind::parse(kind.as_str()), Some(kind));
+        }
+        for stream in [Stream::Stdout, Stream::Stderr] {
+            assert_eq!(Stream::parse(stream.as_str()), Some(stream));
+        }
+        for level in [
+            Level::Unknown,
+            Level::Trace,
+            Level::Debug,
+            Level::Info,
+            Level::Warn,
+            Level::Error,
+        ] {
+            assert_eq!(Level::parse(level.as_str()), Some(level));
+        }
+        assert_eq!(Level::parse("nope"), None);
     }
 
     #[test]
