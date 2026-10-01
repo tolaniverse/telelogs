@@ -103,26 +103,33 @@ pub struct Target {
     pub labels: BTreeMap<String, String>,
 }
 
-/// Case-insensitive substring filter applied to records.
+/// Case-insensitive substring filter applied to records, optionally limited to a time range.
 #[derive(Debug, Clone, Default)]
 pub struct Filter {
     needle: String,
     pub min_level: Option<Level>,
+    /// Inclusive lower bound on `LogRecord::timestamp`.
+    pub from: Option<SystemTime>,
+    /// Inclusive upper bound on `LogRecord::timestamp`.
+    pub to: Option<SystemTime>,
 }
 
 impl Filter {
     pub fn new(text: &str) -> Self {
-        Filter { needle: text.to_lowercase(), min_level: None }
+        Filter { needle: text.to_lowercase(), ..Default::default() }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.needle.is_empty() && self.min_level.is_none()
+        self.needle.is_empty() && self.min_level.is_none() && self.from.is_none() && self.to.is_none()
     }
 
     pub fn matches(&self, record: &LogRecord) -> bool {
         if let Some(min) = self.min_level
             && record.level < min
         {
+            return false;
+        }
+        if self.from.is_some_and(|from| record.timestamp < from) || self.to.is_some_and(|to| record.timestamp > to) {
             return false;
         }
         self.needle.is_empty()
@@ -161,6 +168,24 @@ mod tests {
         assert!(Filter::new("API").matches(&r));
         assert!(!Filter::new("postgres").matches(&r));
         assert!(Filter::new("").matches(&r));
+    }
+
+    #[test]
+    fn filter_respects_time_range() {
+        use std::time::Duration;
+        let at = |secs| {
+            let mut r = record("a", "x");
+            r.timestamp = SystemTime::UNIX_EPOCH + Duration::from_secs(secs);
+            r
+        };
+        let mut f = Filter::new("");
+        f.from = Some(SystemTime::UNIX_EPOCH + Duration::from_secs(10));
+        f.to = Some(SystemTime::UNIX_EPOCH + Duration::from_secs(20));
+        assert!(!f.is_empty());
+        assert!(!f.matches(&at(9)));
+        assert!(f.matches(&at(10)));
+        assert!(f.matches(&at(20)));
+        assert!(!f.matches(&at(21)));
     }
 
     #[test]

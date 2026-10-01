@@ -6,6 +6,7 @@ mod assets;
 mod client;
 mod json;
 mod theme;
+mod time_range;
 mod ui;
 mod workspace;
 

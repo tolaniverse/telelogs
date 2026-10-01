@@ -6,6 +6,7 @@ use super::sidebar::kind_icon;
 use super::{Screen, Status, View, Workspace, modal};
 use crate::theme::{MONO, tokens};
 use crate::ui::widgets::kbd;
+use crate::time_range::{PRESETS, TimeRange};
 use crate::ui::{Icon, icon};
 
 #[derive(Clone)]
@@ -18,6 +19,7 @@ pub enum Action {
     ClearStream,
     Reconnect,
     Solo(String),
+    Range(TimeRange),
 }
 
 #[derive(Clone)]
@@ -69,6 +71,14 @@ impl Workspace {
             ),
             command("Actions", "Clear stream", Icon::Broom, "", Action::ClearStream),
         ];
+        all.extend(PRESETS.iter().map(|(window, label)| Command {
+            group: "Time range",
+            label: label.to_string(),
+            glyph: Icon::ClockCounterClockwise,
+            shortcut: "",
+            action: Action::Range(TimeRange::Last(*window)),
+        }));
+        all.push(command("Time range", "All time", Icon::ClockCounterClockwise, "", Action::Range(TimeRange::All)));
         if matches!(self.status, Status::Disconnected { .. }) {
             all.push(command("Actions", "Reconnect server", Icon::PlugsConnected, "", Action::Reconnect));
         }
@@ -103,6 +113,10 @@ impl Workspace {
                 self.go(Screen::Stream, cx);
             }
             Action::Solo(origin) => self.solo(&origin, cx),
+            Action::Range(range) => {
+                self.screen = Screen::Stream;
+                self.set_range(range, cx);
+            }
         }
         self.focus.focus(window, cx);
     }

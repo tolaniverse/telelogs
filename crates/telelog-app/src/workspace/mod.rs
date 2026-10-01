@@ -4,11 +4,12 @@
 mod add_source;
 mod pages;
 mod palette;
+mod range;
 mod sidebar;
 mod stream;
 
 use std::collections::{HashMap, HashSet};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use futures::StreamExt;
 use futures::channel::mpsc::UnboundedReceiver;
@@ -19,6 +20,7 @@ use telelog_core::{Filter, Level, LogRecord, SourceKind, Target};
 
 use crate::client::{Client, ClientEvent};
 use crate::theme::{self, MONO, tokens};
+use crate::time_range::TimeRange;
 use crate::ui::Icon;
 
 actions!(telelogs, [ToggleCommandPalette, ToggleJsonView]);
@@ -89,6 +91,10 @@ pub struct Workspace {
     visible: Vec<usize>,
     filter: Filter,
     level: LevelFilter,
+    range: TimeRange,
+    range_open: bool,
+    range_error: Option<String>,
+    range_inputs: range::RangeInputs,
     view: View,
     follow: bool,
     selected: Option<u64>,
@@ -109,6 +115,7 @@ pub struct Workspace {
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
     _pump: Task<()>,
+    _range_tick: Task<()>,
 }
 
 impl Workspace {
@@ -149,6 +156,21 @@ impl Workspace {
             }
         });
 
+        // Relative ranges ("last 15 minutes") move with the clock, so old lines age out.
+        let range_tick = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(5)).await;
+                let alive = this.update(cx, |this, cx| {
+                    if this.range.is_relative() {
+                        this.refilter(cx);
+                    }
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        });
+
         let focus = cx.focus_handle();
         focus.focus(window, cx);
 
@@ -165,6 +187,10 @@ impl Workspace {
             visible: Vec::new(),
             filter: Filter::default(),
             level: LevelFilter::All,
+            range: TimeRange::All,
+            range_open: false,
+            range_error: None,
+            range_inputs: range::RangeInputs::new(window, cx),
             view: View::Rows,
             follow: true,
             selected: None,
@@ -181,6 +207,7 @@ impl Workspace {
             focus,
             _subscriptions: subscriptions,
             _pump: pump,
+            _range_tick: range_tick,
         }
     }
 
@@ -217,6 +244,7 @@ impl Workspace {
                 }
                 ClientEvent::Disconnected { reason } => self.status = Status::Disconnected { reason },
                 ClientEvent::Record(record) => {
+                    self.note_target(&record);
                     let entry = Entry { id: self.next_id, record };
                     self.next_id += 1;
                     if self.passes(&entry) {
@@ -236,10 +264,27 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The server follows containers as they start; the first line from one adds it to the sidebar.
+    fn note_target(&mut self, record: &LogRecord) {
+        if self.targets.iter().any(|t| t.name == record.origin) {
+            return;
+        }
+        let id = record.labels.get("container_id").cloned().unwrap_or_else(|| record.origin.clone());
+        self.targets.push(Target {
+            id,
+            name: record.origin.clone(),
+            source: record.source,
+            state: "running".into(),
+            labels: record.labels.clone(),
+        });
+        self.enabled.entry(record.origin.clone()).or_insert(true);
+    }
+
     fn refilter(&mut self, cx: &mut Context<Self>) {
         let text = self.filter_input.read(cx).value();
         self.filter = Filter::new(&text);
         self.filter.min_level = self.level.min_level();
+        (self.filter.from, self.filter.to) = self.range.bounds(SystemTime::now());
         self.rebuild_visible();
         self.scroll_to_end_if_following();
         cx.notify();
@@ -300,6 +345,7 @@ impl Workspace {
 
     fn reset_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.level = LevelFilter::All;
+        self.range = TimeRange::All;
         for target in &self.targets {
             self.enabled.insert(target.name.clone(), target.state == "running");
         }
@@ -392,7 +438,10 @@ impl Workspace {
             cx.stop_propagation();
             cx.notify();
         } else if key == "escape" {
-            if self.add_open {
+            // Close the innermost thing that is open: range picker, dialog, then selection.
+            if self.range_open {
+                self.close_range(cx);
+            } else if self.add_open {
                 self.close_overlays(window, cx);
             } else if self.selected.is_some() {
                 self.selected = None;

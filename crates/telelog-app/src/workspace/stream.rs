@@ -283,6 +283,7 @@ impl Workspace {
             .border_color(t.line)
             .child(search)
             .child(level_control)
+            .child(self.render_range_picker(cx))
             .child(div().flex_1())
             .child(view_control)
             .child(follow)
