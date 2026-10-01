@@ -1,0 +1,531 @@
+//! The window's root view: owns all app state and lays out the title bar, sidebar and
+//! the active screen. Each screen renders from its own module.
+
+mod add_source;
+mod pages;
+mod palette;
+mod sidebar;
+mod stream;
+
+use std::collections::{HashMap, HashSet};
+use std::time::SystemTime;
+
+use futures::StreamExt;
+use futures::channel::mpsc::UnboundedReceiver;
+use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::*;
+use telelog_core::{Filter, Level, LogRecord, SourceKind, Target};
+
+use crate::client::{Client, ClientEvent};
+use crate::theme::{self, MONO, tokens};
+use crate::ui::Icon;
+
+actions!(telelogs, [ToggleCommandPalette, ToggleJsonView]);
+
+/// Records kept in memory. Older ones are dropped; long retention lives in buckets.
+pub const BUFFER: usize = 200_000;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Screen {
+    Stream,
+    Sources,
+    Storage,
+    Team,
+    Agents,
+}
+
+pub enum Status {
+    Connecting,
+    Connected,
+    Disconnected { reason: String },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum View {
+    Rows,
+    Json,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum LevelFilter {
+    All,
+    Error,
+    Warn,
+    Info,
+    Debug,
+}
+
+impl LevelFilter {
+    fn min_level(self) -> Option<Level> {
+        match self {
+            LevelFilter::All => None,
+            LevelFilter::Error => Some(Level::Error),
+            LevelFilter::Warn => Some(Level::Warn),
+            LevelFilter::Info => Some(Level::Info),
+            LevelFilter::Debug => Some(Level::Debug),
+        }
+    }
+}
+
+pub struct Entry {
+    pub id: u64,
+    pub record: LogRecord,
+}
+
+pub struct Workspace {
+    server: String,
+    client: Client,
+    screen: Screen,
+    status: Status,
+    targets: Vec<Target>,
+    /// Origins (target names) included in the stream. Missing means included.
+    enabled: HashMap<String, bool>,
+    open_groups: HashSet<SourceKind>,
+
+    entries: Vec<Entry>,
+    next_id: u64,
+    /// Indices into `entries` that pass the filters.
+    visible: Vec<usize>,
+    filter: Filter,
+    level: LevelFilter,
+    view: View,
+    follow: bool,
+    selected: Option<u64>,
+    copied: bool,
+
+    filter_input: Entity<InputState>,
+    rows_scroll: UniformListScrollHandle,
+    json_scroll: ScrollHandle,
+
+    palette_open: bool,
+    palette_input: Entity<InputState>,
+    palette_index: usize,
+
+    add_open: bool,
+    add_kind: SourceKind,
+    add_inputs: add_source::Inputs,
+
+    focus: FocusHandle,
+    _subscriptions: Vec<Subscription>,
+    _pump: Task<()>,
+}
+
+impl Workspace {
+    pub fn new(
+        server: String,
+        client: Client,
+        mut events: UnboundedReceiver<ClientEvent>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let filter_input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter by text or container…"));
+        let palette_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Type a command or search sources…"));
+        let subscriptions = vec![
+            cx.subscribe(&filter_input, |this, _, event, cx| {
+                if let InputEvent::Change = event {
+                    this.refilter(cx);
+                }
+            }),
+            cx.subscribe(&palette_input, |this, _, event, cx| {
+                if let InputEvent::Change = event {
+                    this.palette_index = 0;
+                    cx.notify();
+                }
+            }),
+        ];
+
+        // Drain events in batches so a burst of lines costs one re-render.
+        let pump = cx.spawn(async move |this, cx| {
+            while let Some(first) = events.next().await {
+                let mut batch = vec![first];
+                while let Ok(event) = events.try_recv() {
+                    batch.push(event);
+                }
+                if this.update(cx, |this, cx| this.apply(batch, cx)).is_err() {
+                    break;
+                }
+            }
+        });
+
+        let focus = cx.focus_handle();
+        focus.focus(window, cx);
+
+        Workspace {
+            server,
+            client,
+            screen: Screen::Stream,
+            status: Status::Connecting,
+            targets: Vec::new(),
+            enabled: HashMap::new(),
+            open_groups: HashSet::from([SourceKind::Docker, SourceKind::Kubernetes]),
+            entries: Vec::new(),
+            next_id: 1,
+            visible: Vec::new(),
+            filter: Filter::default(),
+            level: LevelFilter::All,
+            view: View::Rows,
+            follow: true,
+            selected: None,
+            copied: false,
+            filter_input,
+            rows_scroll: UniformListScrollHandle::new(),
+            json_scroll: ScrollHandle::new(),
+            palette_open: false,
+            palette_input,
+            palette_index: 0,
+            add_open: false,
+            add_kind: SourceKind::Docker,
+            add_inputs: add_source::Inputs::new(window, cx),
+            focus,
+            _subscriptions: subscriptions,
+            _pump: pump,
+        }
+    }
+
+    fn server_addr(&self) -> &str {
+        self.server.trim_start_matches("http://").trim_start_matches("https://")
+    }
+
+    fn is_enabled(&self, origin: &str) -> bool {
+        self.enabled.get(origin).copied().unwrap_or(true)
+    }
+
+    fn passes(&self, entry: &Entry) -> bool {
+        self.is_enabled(&entry.record.origin) && self.filter.matches(&entry.record)
+    }
+
+    fn apply(&mut self, batch: Vec<ClientEvent>, cx: &mut Context<Self>) {
+        for event in batch {
+            match event {
+                ClientEvent::Connecting => {
+                    if !matches!(self.status, Status::Disconnected { .. }) {
+                        self.status = Status::Connecting;
+                    }
+                }
+                ClientEvent::Connected { targets } => {
+                    // The server resends backlog on reconnect, so start fresh.
+                    self.entries.clear();
+                    self.visible.clear();
+                    self.selected = None;
+                    for target in &targets {
+                        self.enabled.entry(target.name.clone()).or_insert(target.state == "running");
+                    }
+                    self.targets = targets;
+                    self.status = Status::Connected;
+                }
+                ClientEvent::Disconnected { reason } => self.status = Status::Disconnected { reason },
+                ClientEvent::Record(record) => {
+                    let entry = Entry { id: self.next_id, record };
+                    self.next_id += 1;
+                    if self.passes(&entry) {
+                        self.visible.push(self.entries.len());
+                    }
+                    self.entries.push(entry);
+                }
+            }
+        }
+
+        if self.entries.len() > BUFFER {
+            let excess = self.entries.len() - BUFFER;
+            self.entries.drain(..excess);
+            self.rebuild_visible();
+        }
+        self.scroll_to_end_if_following();
+        cx.notify();
+    }
+
+    fn refilter(&mut self, cx: &mut Context<Self>) {
+        let text = self.filter_input.read(cx).value();
+        self.filter = Filter::new(&text);
+        self.filter.min_level = self.level.min_level();
+        self.rebuild_visible();
+        self.scroll_to_end_if_following();
+        cx.notify();
+    }
+
+    fn rebuild_visible(&mut self) {
+        self.visible = (0..self.entries.len()).filter(|&i| self.passes(&self.entries[i])).collect();
+    }
+
+    fn scroll_to_end_if_following(&self) {
+        if !self.follow || self.visible.is_empty() {
+            return;
+        }
+        match self.view {
+            View::Rows => self.rows_scroll.scroll_to_item(self.visible.len() - 1, ScrollStrategy::Bottom),
+            View::Json => self.json_scroll.scroll_to_bottom(),
+        }
+    }
+
+    fn set_follow(&mut self, follow: bool, cx: &mut Context<Self>) {
+        if self.follow != follow {
+            self.follow = follow;
+            self.scroll_to_end_if_following();
+            cx.notify();
+        }
+    }
+
+    fn set_view(&mut self, view: View, cx: &mut Context<Self>) {
+        self.view = view;
+        self.screen = Screen::Stream;
+        self.scroll_to_end_if_following();
+        cx.notify();
+    }
+
+    fn toggle_target(&mut self, origin: &str, cx: &mut Context<Self>) {
+        let on = self.is_enabled(origin);
+        self.enabled.insert(origin.to_string(), !on);
+        self.rebuild_visible();
+        cx.notify();
+    }
+
+    /// "Tail only this": include one origin, exclude the rest.
+    fn solo(&mut self, origin: &str, cx: &mut Context<Self>) {
+        for target in &self.targets {
+            self.enabled.insert(target.name.clone(), target.name == origin);
+        }
+        self.enabled.insert(origin.to_string(), true);
+        self.screen = Screen::Stream;
+        self.rebuild_visible();
+        self.scroll_to_end_if_following();
+        cx.notify();
+    }
+
+    fn set_filter_text(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.filter_input.update(cx, |input, cx| input.set_value(text, window, cx));
+        self.refilter(cx);
+    }
+
+    fn reset_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.level = LevelFilter::All;
+        for target in &self.targets {
+            self.enabled.insert(target.name.clone(), target.state == "running");
+        }
+        self.set_filter_text(String::new(), window, cx);
+    }
+
+    fn go(&mut self, screen: Screen, cx: &mut Context<Self>) {
+        self.screen = screen;
+        self.selected = None;
+        cx.notify();
+    }
+
+    fn toggle_theme(&mut self, cx: &mut Context<Self>) {
+        let dark = tokens(cx).dark;
+        theme::apply(!dark, cx);
+        cx.notify();
+    }
+
+    fn clear_stream(&mut self, cx: &mut Context<Self>) {
+        self.entries.clear();
+        self.visible.clear();
+        self.selected = None;
+        cx.notify();
+    }
+
+    fn selected_entry(&self) -> Option<&Entry> {
+        let id = self.selected?;
+        // Ids are increasing, so the entry can be found by binary search.
+        let ix = self.entries.binary_search_by_key(&id, |e| e.id).ok()?;
+        self.entries.get(ix)
+    }
+
+    /// Lines `origin` wrote during the last minute (by log timestamp, so backlog doesn't count).
+    fn lines_per_minute(&self, origin: &str) -> usize {
+        let cutoff = SystemTime::now() - std::time::Duration::from_secs(60);
+        self.entries
+            .iter()
+            .rev()
+            .take_while(|e| e.record.timestamp >= cutoff)
+            .filter(|e| e.record.origin == origin)
+            .count()
+    }
+
+    fn oldest_record(&self) -> Option<SystemTime> {
+        self.entries.first().map(|e| e.record.timestamp)
+    }
+
+    fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.palette_open = true;
+        self.add_open = false;
+        self.palette_index = 0;
+        self.palette_input.update(cx, |input, cx| {
+            input.set_value("", window, cx);
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    fn close_overlays(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.palette_open = false;
+        self.add_open = false;
+        self.focus.focus(window, cx);
+        cx.notify();
+    }
+
+    fn open_add_source(&mut self, cx: &mut Context<Self>) {
+        self.add_open = true;
+        self.palette_open = false;
+        cx.notify();
+    }
+
+    /// Escape, arrows and Enter are handled here, before inputs see them, so they work
+    /// while typing in the command palette.
+    fn capture_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let key = event.keystroke.key.as_str();
+        if self.palette_open {
+            let count = self.palette_commands(cx).len();
+            match key {
+                "escape" => self.close_overlays(window, cx),
+                "down" if count > 0 => self.palette_index = (self.palette_index + 1) % count,
+                "up" if count > 0 => self.palette_index = (self.palette_index + count - 1) % count,
+                "enter" => {
+                    if let Some(command) = self.palette_commands(cx).into_iter().nth(self.palette_index) {
+                        self.close_overlays(window, cx);
+                        self.run(command.action, window, cx);
+                    }
+                }
+                _ => return,
+            }
+            cx.stop_propagation();
+            cx.notify();
+        } else if key == "escape" {
+            if self.add_open {
+                self.close_overlays(window, cx);
+            } else if self.selected.is_some() {
+                self.selected = None;
+                cx.notify();
+            } else {
+                return;
+            }
+            cx.stop_propagation();
+        }
+    }
+
+    fn render_titlebar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let t = tokens(cx);
+        div()
+            .h(px(40.))
+            .flex_none()
+            .relative()
+            .flex()
+            .items_center()
+            .px(px(14.))
+            .bg(t.bg2)
+            .border_b_1()
+            .border_color(t.line)
+            .on_mouse_down(MouseButton::Left, |event, window, _| {
+                if event.click_count == 2 {
+                    window.titlebar_double_click();
+                } else {
+                    window.start_window_move();
+                }
+            })
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(8.))
+                    .text_size(px(12.5))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(t.fg2)
+                    .child("telelogs")
+                    .child(div().text_color(t.fg3).child("—"))
+                    .child(div().font_family(MONO).text_size(px(12.)).child(self.server_addr().to_string())),
+            )
+            .child(div().flex_1())
+            .child(
+                div()
+                    .id("theme-toggle")
+                    .w(px(28.))
+                    .h(px(26.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(6.))
+                    .border_1()
+                    .border_color(t.line2)
+                    .bg(t.bg)
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_theme(cx)))
+                    .child(crate::ui::icon(if t.dark { Icon::Sun } else { Icon::Moon }, 14., t.fg2)),
+            )
+    }
+
+    fn render_screen(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        match self.screen {
+            Screen::Stream => self.render_stream(window, cx).into_any_element(),
+            Screen::Sources => self.render_sources(cx).into_any_element(),
+            Screen::Storage => self.render_storage(cx).into_any_element(),
+            Screen::Team => self.render_team(cx).into_any_element(),
+            Screen::Agents => self.render_agents(cx).into_any_element(),
+        }
+    }
+}
+
+impl Render for Workspace {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = tokens(cx);
+        let screen = self.render_screen(window, cx);
+        let palette = self.palette_open.then(|| self.render_palette(cx));
+        let add = self.add_open.then(|| self.render_add_source(cx));
+
+        div()
+            .key_context("Workspace")
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|this, _: &ToggleCommandPalette, window, cx| {
+                if this.palette_open {
+                    this.close_overlays(window, cx);
+                } else {
+                    this.open_palette(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &ToggleJsonView, _, cx| {
+                let view = if this.view == View::Rows { View::Json } else { View::Rows };
+                this.set_view(view, cx);
+            }))
+            .capture_key_down(cx.listener(Self::capture_key))
+            .relative()
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(t.bg)
+            .font_family(theme::SANS)
+            .text_color(t.fg)
+            .child(self.render_titlebar(cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .child(self.render_sidebar(cx))
+                    .child(div().flex_1().min_w_0().h_full().flex().flex_col().bg(t.bg).child(screen)),
+            )
+            .children(palette)
+            .children(add)
+    }
+}
+
+/// A full-window scrim that closes overlays when clicked outside `panel`.
+fn modal(t: crate::theme::Tokens, panel: impl IntoElement, top: Option<f32>, cx: &mut Context<Workspace>) -> Div {
+    div()
+        .absolute()
+        .inset_0()
+        .occlude()
+        .bg(t.scrim)
+        .flex()
+        .justify_center()
+        .map(|el| match top {
+            Some(top) => el.items_start().pt(px(top)),
+            None => el.items_center(),
+        })
+        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| this.close_overlays(window, cx)))
+        .child(panel)
+}
+

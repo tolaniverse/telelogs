@@ -6,7 +6,7 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 
 /// Where a log line came from.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SourceKind {
     Docker,
     Kubernetes,
@@ -29,7 +29,37 @@ pub enum Level {
     Error,
 }
 
+impl SourceKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SourceKind::Docker => "docker",
+            SourceKind::Kubernetes => "kubernetes",
+            SourceKind::Vm => "vm",
+        }
+    }
+}
+
+impl Stream {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Stream::Stdout => "stdout",
+            Stream::Stderr => "stderr",
+        }
+    }
+}
+
 impl Level {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Level::Unknown => "unknown",
+            Level::Trace => "trace",
+            Level::Debug => "debug",
+            Level::Info => "info",
+            Level::Warn => "warn",
+            Level::Error => "error",
+        }
+    }
+
     /// Best-effort level detection from an unstructured line.
     pub fn sniff(line: &str) -> Level {
         let head = &line[..line.len().min(64)];

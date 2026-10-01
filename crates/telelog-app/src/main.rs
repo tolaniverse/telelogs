@@ -2,9 +2,12 @@ use anyhow::Result;
 use clap::Parser;
 use gpui_kit::*;
 
+mod assets;
 mod client;
-mod log_view;
-mod time;
+mod json;
+mod theme;
+mod ui;
+mod workspace;
 
 #[derive(Parser)]
 #[command(version, about = "Telelogs desktop app")]
@@ -25,25 +28,31 @@ fn main() -> Result<()> {
     // Keep the runtime alive on its own thread for the life of the process.
     std::thread::spawn(move || runtime.block_on(std::future::pending::<()>()));
 
-    gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
-        .run(move |cx| {
-            gpui_kit::init(cx);
+    gpui_kit::application().with_assets(assets::Assets).run(move |cx| {
+        gpui_kit::init(cx);
+        theme::load_fonts(cx).expect("bundled fonts are valid");
+        theme::apply(true, cx);
+        cx.bind_keys([
+            KeyBinding::new("secondary-k", workspace::ToggleCommandPalette, None),
+            KeyBinding::new("secondary-j", workspace::ToggleJsonView, None),
+        ]);
 
-            let options = WindowOptions {
-                window_bounds: Some(WindowBounds::centered(size(px(1200.), px(760.)), cx)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Telelogs".into()),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            };
-            gpui_kit::open_window(options, cx, |window, cx| {
-                let events = client::spawn_tail(&handle, args.server.clone());
-                cx.new(|cx| log_view::LogView::new(args.server.clone(), events, window, cx))
-            })
-            .expect("failed to open window");
-            cx.activate(true);
-        });
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::centered(size(px(1320.), px(840.)), cx)),
+            window_min_size: Some(size(px(960.), px(600.))),
+            titlebar: Some(TitlebarOptions {
+                title: Some("telelogs".into()),
+                appears_transparent: true,
+                traffic_light_position: Some(point(px(14.), px(13.))),
+            }),
+            ..Default::default()
+        };
+        gpui_kit::open_window(options, cx, |window, cx| {
+            let (client, events) = client::spawn(&handle, args.server.clone());
+            cx.new(|cx| workspace::Workspace::new(args.server.clone(), client, events, window, cx))
+        })
+        .expect("failed to open window");
+        cx.activate(true);
+    });
     Ok(())
 }

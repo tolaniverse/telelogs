@@ -1,6 +1,6 @@
 //! Tails container logs through the Docker Engine API.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::SystemTime;
 
 use anyhow::{Context as _, Result};
@@ -39,12 +39,13 @@ impl DockerSource {
                     .and_then(|n| n.into_iter().next())
                     .map(|n| n.trim_start_matches('/').to_string())
                     .unwrap_or_else(|| id.chars().take(12).collect());
+                let labels = target_labels(&id, c.image.as_deref(), c.labels.unwrap_or_default());
                 Some(Target {
                     id,
                     name,
                     source: SourceKind::Docker,
                     state: c.state.map(|s| s.to_string()).unwrap_or_default(),
-                    labels: c.labels.unwrap_or_default().into_iter().collect(),
+                    labels,
                 })
             })
             .collect())
@@ -78,6 +79,25 @@ impl DockerSource {
     pub fn tail_many(&self, targets: &[Target], backlog: u32) -> BoxStream<'static, Result<LogRecord>> {
         stream::select_all(targets.iter().map(|t| self.tail(t, backlog))).boxed()
     }
+}
+
+/// The few labels worth showing on every line. Raw container labels are often dozens of
+/// build annotations, so only the Compose project and service are carried over.
+fn target_labels(id: &str, image: Option<&str>, container: HashMap<String, String>) -> BTreeMap<String, String> {
+    let mut labels = BTreeMap::new();
+    labels.insert("container_id".to_string(), id.chars().take(12).collect());
+    if let Some(image) = image {
+        labels.insert("image".to_string(), image.to_string());
+    }
+    for (key, short) in [
+        ("com.docker.compose.project", "compose_project"),
+        ("com.docker.compose.service", "compose_service"),
+    ] {
+        if let Some(value) = container.get(key) {
+            labels.insert(short.to_string(), value.clone());
+        }
+    }
+    labels
 }
 
 fn parse_output(output: LogOutput, origin: &str, labels: &BTreeMap<String, String>) -> Vec<LogRecord> {
@@ -120,6 +140,19 @@ fn split_timestamp(line: &str) -> (SystemTime, &str) {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn keeps_only_useful_labels() {
+        let container = HashMap::from([
+            ("com.docker.compose.service".to_string(), "api".to_string()),
+            ("org.opencontainers.image.revision".to_string(), "abc".to_string()),
+        ]);
+        let labels = target_labels("0123456789abcdef", Some("alpine"), container);
+        assert_eq!(labels["container_id"], "0123456789ab");
+        assert_eq!(labels["image"], "alpine");
+        assert_eq!(labels["compose_service"], "api");
+        assert_eq!(labels.len(), 3);
+    }
 
     #[test]
     fn splits_docker_timestamp_prefix() {

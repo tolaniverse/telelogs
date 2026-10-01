@@ -7038,9 +7038,12 @@ name = "telelog-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "futures",
  "gpui-kit",
+ "rust-embed",
+ "serde_json",
  "telelog-core",
  "telelog-proto",
  "tokio",

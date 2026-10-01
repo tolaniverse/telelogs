@@ -42,3 +42,7 @@ Telelogs is open source under two licenses:
 You can self-host, modify and use the server freely. If you offer a modified server to others over a network, the AGPL requires you to publish your changes. The app and libraries are permissive, so you can embed them or build integrations without restriction.
 
 Each crate's `Cargo.toml` declares its license.
+
+### Third-party assets
+
+The app bundles [Geist and Geist Mono](https://github.com/vercel/geist-font) (SIL Open Font License, `crates/telelog-app/assets/fonts/OFL.txt`) and [Phosphor icons](https://phosphoricons.com) (MIT, `crates/telelog-app/assets/icons/LICENSE-PHOSPHOR`).
