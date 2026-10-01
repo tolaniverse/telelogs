@@ -1,0 +1,20 @@
+[package]
+name = "telelog-app"
+description = "Telelogs desktop app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "telelogs"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+futures.workspace = true
+gpui-kit = "0.7"
+telelog-core.workspace = true
+telelog-proto.workspace = true
+tokio.workspace = true
+tonic.workspace = true

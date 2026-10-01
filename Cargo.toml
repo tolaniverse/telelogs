@@ -1,0 +1,37 @@
+[workspace]
+resolver = "3"
+members = ["crates/telelog-core", "crates/telelog-proto", "crates/telelog-sources", "crates/telelog-server", "crates/telelog-app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/tolaniverse/telelogs"
+
+[workspace.dependencies]
+telelog-core = { path = "crates/telelog-core" }
+telelog-proto = { path = "crates/telelog-proto" }
+telelog-sources = { path = "crates/telelog-sources" }
+
+anyhow = "1"
+bollard = "0.21"
+clap = { version = "4", features = ["derive", "env"] }
+futures = "0.3"
+prost = "0.14"
+prost-types = "0.14"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "signal"] }
+tokio-stream = "0.1"
+tonic = "0.14"
+tonic-prost = "0.14"
+tonic-prost-build = "0.14"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# GPUI's dependency tree is large; full debug info for it costs gigabytes.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

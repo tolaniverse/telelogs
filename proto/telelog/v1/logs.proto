@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package telelog.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Served by telelog-server, consumed by telelog-app.
+service LogService {
+  // Lists every target the server can tail (containers, pods, VM files).
+  rpc ListTargets(ListTargetsRequest) returns (ListTargetsResponse);
+  // Streams log records from the selected targets until the client disconnects.
+  rpc Tail(TailRequest) returns (stream LogRecord);
+}
+
+enum SourceKind {
+  SOURCE_KIND_UNSPECIFIED = 0;
+  SOURCE_KIND_DOCKER = 1;
+  SOURCE_KIND_KUBERNETES = 2;
+  SOURCE_KIND_VM = 3;
+}
+
+enum Stream {
+  STREAM_UNSPECIFIED = 0;
+  STREAM_STDOUT = 1;
+  STREAM_STDERR = 2;
+}
+
+enum Level {
+  LEVEL_UNKNOWN = 0;
+  LEVEL_TRACE = 1;
+  LEVEL_DEBUG = 2;
+  LEVEL_INFO = 3;
+  LEVEL_WARN = 4;
+  LEVEL_ERROR = 5;
+}
+
+message Target {
+  string id = 1;
+  string name = 2;
+  SourceKind source = 3;
+  string state = 4;
+  map<string, string> labels = 5;
+}
+
+message ListTargetsRequest {
+  // Include stopped containers.
+  bool all = 1;
+}
+
+message ListTargetsResponse {
+  repeated Target targets = 1;
+}
+
+message TailRequest {
+  // Target ids to tail. Empty means every running target.
+  repeated string target_ids = 1;
+  // Number of historical lines per target to send before following.
+  uint32 backlog = 2;
+}
+
+message LogRecord {
+  google.protobuf.Timestamp timestamp = 1;
+  SourceKind source = 2;
+  string origin = 3;
+  Stream stream = 4;
+  Level level = 5;
+  string body = 6;
+  map<string, string> labels = 7;
+}

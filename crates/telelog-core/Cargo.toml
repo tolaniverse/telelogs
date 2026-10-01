@@ -1,0 +1,9 @@
+[package]
+name = "telelog-core"
+description = "Shared log record model for Telelogs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
