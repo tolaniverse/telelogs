@@ -45,7 +45,10 @@ impl LogService for Logs {
         // No explicit targets means "everything": follow new containers as they start too.
         let records = if request.target_ids.is_empty() {
             tracing::info!("live tail started");
-            self.docker.tail_live(backlog).await.map_err(|e| Status::unavailable(format!("{e:#}")))?
+            self.docker
+                .tail_live(backlog)
+                .await
+                .map_err(|e| Status::unavailable(format!("{e:#}")))?
         } else {
             let targets: Vec<_> = self
                 .docker

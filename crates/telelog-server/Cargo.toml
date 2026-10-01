@@ -9,10 +9,15 @@ license = "AGPL-3.0-only"
 anyhow.workspace = true
 clap.workspace = true
 futures.workspace = true
+getrandom = "0.3"
 telelog-core.workspace = true
 telelog-proto.workspace = true
 telelog-sources.workspace = true
 tokio.workspace = true
+tokio-stream.workspace = true
 tonic.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+rcgen = "0.14"

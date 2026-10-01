@@ -4,6 +4,8 @@ use std::time::{Duration, SystemTime};
 
 use telelog_core as core;
 
+pub mod auth;
+
 pub mod v1 {
     tonic::include_proto!("telelog.v1");
 }
@@ -77,14 +79,15 @@ impl From<v1::Level> for core::Level {
 
 fn to_timestamp(t: SystemTime) -> prost_types::Timestamp {
     let d = t.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
-    prost_types::Timestamp { seconds: d.as_secs() as i64, nanos: d.subsec_nanos() as i32 }
+    prost_types::Timestamp {
+        seconds: d.as_secs() as i64,
+        nanos: d.subsec_nanos() as i32,
+    }
 }
 
 fn from_timestamp(t: Option<prost_types::Timestamp>) -> SystemTime {
-    t.map(|t| {
-        SystemTime::UNIX_EPOCH + Duration::new(t.seconds.max(0) as u64, t.nanos.max(0) as u32)
-    })
-    .unwrap_or(SystemTime::UNIX_EPOCH)
+    t.map(|t| SystemTime::UNIX_EPOCH + Duration::new(t.seconds.max(0) as u64, t.nanos.max(0) as u32))
+        .unwrap_or(SystemTime::UNIX_EPOCH)
 }
 
 impl From<core::LogRecord> for v1::LogRecord {

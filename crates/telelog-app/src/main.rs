@@ -13,13 +13,29 @@ mod workspace;
 #[derive(Parser)]
 #[command(version, about = "Telelogs desktop app")]
 struct Args {
-    /// telelog-server gRPC endpoint.
+    /// telelog-server gRPC endpoint (http:// or https://).
     #[arg(long, env = "TELELOG_SERVER", default_value = "http://127.0.0.1:7070")]
     server: String,
+
+    /// Token the server expects (see `telelog-server gen-token`).
+    #[arg(long, env = "TELELOG_TOKEN", hide_env_values = true)]
+    token: Option<String>,
+
+    /// PEM CA certificate to trust, for an https:// server with a self-signed certificate.
+    #[arg(long, env = "TELELOG_CA_CERT")]
+    ca_cert: Option<std::path::PathBuf>,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    let connection = client::Connection {
+        server: args.server.clone(),
+        token: args.token.filter(|t| !t.is_empty()),
+        ca_pem: args
+            .ca_cert
+            .map(|path| std::fs::read(&path).map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display())))
+            .transpose()?,
+    };
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -49,7 +65,7 @@ fn main() -> Result<()> {
             ..Default::default()
         };
         gpui_kit::open_window(options, cx, |window, cx| {
-            let (client, events) = client::spawn(&handle, args.server.clone());
+            let (client, events) = client::spawn(&handle, connection.clone());
             cx.new(|cx| workspace::Workspace::new(args.server.clone(), client, events, window, cx))
         })
         .expect("failed to open window");

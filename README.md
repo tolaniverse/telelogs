@@ -1,5 +1,7 @@
 # Telelogs
 
+[![CI](https://github.com/tolaniverse/telelogs/actions/workflows/ci.yml/badge.svg)](https://github.com/tolaniverse/telelogs/actions/workflows/ci.yml)
+
 Open-source log aggregator: a native desktop app (built with [GPUI](https://gpui.rs)) that streams logs from your Docker, Kubernetes and VM environments, with long retention in your own object-storage buckets.
 
 ## Components
@@ -22,6 +24,26 @@ cargo run -p telelog-app               # connects to http://127.0.0.1:7070
 ```
 
 Use `--listen` / `TELELOG_LISTEN` and `--server` / `TELELOG_SERVER` to change addresses.
+
+## Securing the server
+
+On `127.0.0.1` the server runs open, for local use. To reach it from other machines, give it a token
+(and ideally TLS); it refuses to listen beyond localhost without one.
+
+```sh
+export TELELOG_TOKEN=$(telelog-server gen-token)
+telelog-server --listen 0.0.0.0:7070 --tls-cert cert.pem --tls-key key.pem
+```
+
+Then point the app at it with the same token. For a self-signed certificate, pass the CA it was issued by:
+
+```sh
+TELELOG_TOKEN=... telelogs --server https://logs.example.com:7070 --ca-cert ca.pem
+```
+
+All options can also be set as environment variables: `TELELOG_LISTEN`, `TELELOG_TOKEN`, `TELELOG_TLS_CERT`,
+`TELELOG_TLS_KEY`, `TELELOG_SERVER`, `TELELOG_CA_CERT`. If TLS is terminated by a proxy in front of the server,
+the token still works over the proxy's TLS; `--allow-unauthenticated` exists only for proxies that do their own auth.
 
 Try it with a noisy container:
 
