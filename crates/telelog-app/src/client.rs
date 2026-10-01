@@ -99,11 +99,15 @@ async fn tail_once(connection: &Connection, tx: &UnboundedSender<ClientEvent>) -
 
     // Subscribe to state changes before listing, so none fall in the gap. Replaying an event
     // that the listing already reflects is harmless: each one carries the final state.
-    let changes = client
-        .watch_targets(v1::WatchTargetsRequest {})
-        .await?
-        .into_inner()
-        .map(|target| target.map(|t| ClientEvent::TargetChanged(t.into())));
+    // Servers older than WatchTargets answer Unimplemented; keep tailing without live state.
+    let changes = match client.watch_targets(v1::WatchTargetsRequest {}).await {
+        Ok(response) => response
+            .into_inner()
+            .map(|target| target.map(|t| ClientEvent::TargetChanged(t.into())))
+            .boxed(),
+        Err(status) if status.code() == tonic::Code::Unimplemented => futures::stream::pending().boxed(),
+        Err(status) => return Err(status.into()),
+    };
 
     let targets: Vec<Target> = client
         .list_targets(v1::ListTargetsRequest { all: true })
