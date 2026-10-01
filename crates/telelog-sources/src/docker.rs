@@ -24,6 +24,14 @@ impl DockerSource {
         Ok(DockerSource { docker })
     }
 
+    /// Connects to a daemon over plain HTTP (`tcp://host:2375` or `http://host:2375`). Nothing is
+    /// contacted until the first request.
+    pub fn connect_http(addr: &str) -> Result<Self> {
+        let docker = Docker::connect_with_http(addr, 10, bollard::API_DEFAULT_VERSION)
+            .with_context(|| format!("connecting to Docker at {addr}"))?;
+        Ok(DockerSource { docker })
+    }
+
     pub async fn list_targets(&self, all: bool) -> Result<Vec<Target>> {
         let options = ListContainersOptionsBuilder::default().all(all).build();
         let containers = self

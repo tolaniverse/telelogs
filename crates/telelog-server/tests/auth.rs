@@ -1,7 +1,7 @@
 //! End-to-end checks of token auth and TLS against a real in-process server.
 //!
-//! `ListTargets` needs Docker, so an authorized call may fail with `Unavailable` on machines
-//! without it. What matters here is whether the request gets past authentication.
+//! The server is given an unreachable Docker daemon, so an authorized `ListTargets` fails with
+//! `Unavailable`. What matters here is whether the request gets past authentication.
 
 use std::path::Path;
 
@@ -23,7 +23,9 @@ async fn start(config: Config) -> Running {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let (stop, stopped) = oneshot::channel::<()>();
-    let docker = DockerSource::connect().unwrap();
+    // An address nothing listens on: these tests only care whether requests pass auth, and
+    // must behave the same on machines without Docker.
+    let docker = DockerSource::connect_http("tcp://127.0.0.1:9").unwrap();
     tokio::spawn(async move {
         telelog_server::serve(listener, config, docker, async {
             let _ = stopped.await;
