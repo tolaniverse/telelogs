@@ -176,7 +176,7 @@ impl Workspace {
             .flex()
             .items_center()
             .gap(px(10.))
-            .child(brand_mark(t))
+            .child(brand_mark(t, matches!(self.status, Status::Connecting)))
             .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child("telelogs"))
             .child(
                 div()

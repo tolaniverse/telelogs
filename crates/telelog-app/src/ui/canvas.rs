@@ -27,8 +27,9 @@ fn dims(bounds: Bounds<Pixels>) -> (f32, f32) {
     (bounds.size.width / px(1.), bounds.size.height / px(1.))
 }
 
-/// The "T" on a 5×5 dot matrix, with a diagonal shimmer running through it.
-pub fn brand_mark(t: Tokens) -> impl IntoElement {
+/// The "T" on a 5×5 dot matrix. While `animate` is set a diagonal shimmer runs through it;
+/// otherwise it is drawn once at full strength so the window can sit idle.
+pub fn brand_mark(t: Tokens, animate: bool) -> impl IntoElement {
     canvas(
         |_, _, _| {},
         move |bounds, _, window, _| {
@@ -38,7 +39,7 @@ pub fn brand_mark(t: Tokens) -> impl IntoElement {
             for gy in 0..5 {
                 for gx in 0..5 {
                     let on = gy == 0 || gx == 2;
-                    let wave = 0.5 + 0.5 * (time * 2.4 - (gx + gy) as f32 * 0.75).sin();
+                    let wave = if animate { 0.5 + 0.5 * (time * 2.4 - (gx + gy) as f32 * 0.75).sin() } else { 1. };
                     let alpha = if on { 0.5 + 0.5 * wave } else { 0.1 + 0.08 * wave };
                     let center = point(
                         bounds.origin.x + px(gx as f32 * s + s / 2.),
@@ -47,7 +48,9 @@ pub fn brand_mark(t: Tokens) -> impl IntoElement {
                     circle(window, center, s * if on { 0.32 } else { 0.2 }, t.ink(alpha));
                 }
             }
-            window.request_animation_frame();
+            if animate {
+                window.request_animation_frame();
+            }
         },
     )
     .size(px(22.))

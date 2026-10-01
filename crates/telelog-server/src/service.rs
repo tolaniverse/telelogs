@@ -40,24 +40,29 @@ impl LogService for Logs {
 
     async fn tail(&self, request: Request<v1::TailRequest>) -> Result<Response<RecordStream>, Status> {
         let request = request.into_inner();
-        let running = self
-            .docker
-            .list_targets(false)
-            .await
-            .map_err(|e| Status::unavailable(format!("{e:#}")))?;
-
-        let targets: Vec<_> = if request.target_ids.is_empty() {
-            running
-        } else {
-            running.into_iter().filter(|t| request.target_ids.contains(&t.id)).collect()
-        };
-        if targets.is_empty() {
-            return Err(Status::not_found("no running targets match the request"));
-        }
-
-        tracing::info!(count = targets.len(), "tail started");
         let backlog = request.backlog.min(MAX_BACKLOG);
-        let stream = self.docker.tail_many(&targets, backlog).map(|record| {
+
+        // No explicit targets means "everything": follow new containers as they start too.
+        let records = if request.target_ids.is_empty() {
+            tracing::info!("live tail started");
+            self.docker.tail_live(backlog).await.map_err(|e| Status::unavailable(format!("{e:#}")))?
+        } else {
+            let targets: Vec<_> = self
+                .docker
+                .list_targets(false)
+                .await
+                .map_err(|e| Status::unavailable(format!("{e:#}")))?
+                .into_iter()
+                .filter(|t| request.target_ids.contains(&t.id))
+                .collect();
+            if targets.is_empty() {
+                return Err(Status::not_found("no running targets match the request"));
+            }
+            tracing::info!(count = targets.len(), "tail started");
+            self.docker.tail_many(&targets, backlog)
+        };
+
+        let stream = records.map(|record| {
             record
                 .map(v1::LogRecord::from)
                 .map_err(|e| Status::internal(format!("{e:#}")))
