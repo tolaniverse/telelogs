@@ -1,12 +1,15 @@
 //! Sources, Storage, Team and Agents screens.
 //!
-//! Storage, Team and Agents describe features that are not built yet, so they show the
-//! design's layout with real local values and clearly marked "coming soon" sections
-//! instead of sample data.
+//! Team and Agents describe features that are not built yet, so they show the design's
+//! layout with real local values and clearly marked "coming soon" sections instead of
+//! sample data. Storage shows the server's archive as it is.
+
+use std::time::SystemTime;
 
 use chrono::{DateTime, Local};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use telelog_proto::{from_timestamp, v1::StorageInfo};
 
 use super::sidebar::{KINDS, kind_icon, kind_label, user_name};
 use super::stream::group_digits;
@@ -14,7 +17,7 @@ use super::{BUFFER, Status, Workspace};
 use crate::client::BACKLOG;
 use crate::theme::{MONO, Tokens, tokens};
 use crate::ui::canvas::{SphereMode, dot_grid, sphere};
-use crate::ui::widgets::{card, dot, page_header, pill, primary_button, segment, segmented, switch};
+use crate::ui::widgets::{card, dot, outline_button, page_header, pill, primary_button, switch};
 use crate::ui::{Icon, icon};
 
 const REPO_URL: &str = "https://github.com/tolaniverse/telelogs";
@@ -85,6 +88,224 @@ fn section(t: Tokens, title: &'static str, soon: bool) -> Div {
         .font_weight(FontWeight::MEDIUM)
         .child(title)
         .when(soon, |el| el.child(pill(t, "Soon")))
+}
+
+/// "Oct 2" and " 2026", for a stat's value and unit.
+fn day_and_year(time: SystemTime) -> (String, String) {
+    let local: DateTime<Local> = time.into();
+    (local.format("%b %-d").to_string(), local.format(" %Y").to_string())
+}
+
+/// Bytes as a value and unit, in powers of 1024: `("12.4", " MB")`.
+fn format_bytes(bytes: u64) -> (String, String) {
+    const UNITS: [&str; 5] = ["bytes", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024. && unit < UNITS.len() - 1 {
+        value /= 1024.;
+        unit += 1;
+    }
+    let number = if unit == 0 || value >= 100. {
+        format!("{value:.0}")
+    } else {
+        format!("{value:.1}")
+    };
+    (number, format!(" {}", UNITS[unit]))
+}
+
+/// "just now", "42s ago", "5m ago", "3h ago", "2d ago".
+fn ago(time: SystemTime, now: SystemTime) -> String {
+    let secs = now.duration_since(time).map(|d| d.as_secs()).unwrap_or(0);
+    match secs {
+        0..5 => "just now".into(),
+        5..60 => format!("{secs}s ago"),
+        60..3600 => format!("{}m ago", secs / 60),
+        3600..86_400 => format!("{}h ago", secs / 3600),
+        _ => format!("{}d ago", secs / 86_400),
+    }
+}
+
+fn empty_state(t: Tokens, glyph: Icon, title: &'static str, detail: Option<SharedString>) -> Div {
+    div()
+        .px(px(18.))
+        .py(px(28.))
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(px(6.))
+        .child(icon(glyph, 22., t.fg3))
+        .child(div().text_size(px(13.5)).font_weight(FontWeight::MEDIUM).child(title))
+        .children(detail.map(|d| div().text_size(px(12.5)).text_color(t.fg3).child(d)))
+}
+
+/// How to turn archiving on, when the server runs without a bucket.
+fn archive_setup(t: Tokens) -> Div {
+    let code = |line: &'static str| {
+        div()
+            .px(px(12.))
+            .py(px(9.))
+            .rounded(px(7.))
+            .bg(t.bg2)
+            .border_1()
+            .border_color(t.line)
+            .font_family(MONO)
+            .text_size(px(12.))
+            .child(line)
+    };
+    div()
+        .px(px(18.))
+        .py(px(20.))
+        .flex()
+        .flex_col()
+        .gap(px(12.))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(icon(Icon::Cylinder, 16., t.fg3))
+                .child(
+                    div()
+                        .text_size(px(13.5))
+                        .font_weight(FontWeight::MEDIUM)
+                        .child("Archiving is off"),
+                ),
+        )
+        .child(div().text_size(px(12.5)).text_color(t.fg3).child(
+            "Restart telelog-server with a bucket to keep every line past the in-memory buffer. \
+             Credentials come from the provider’s usual environment variables.",
+        ))
+        .child(code(
+            "telelog-server --archive-url s3://your-bucket/telelogs --retention-days 90",
+        ))
+        .child(div().text_size(px(12.)).text_color(t.fg3).child(
+            "Also gs://bucket/prefix for Google Cloud Storage, R2 or MinIO through AWS_ENDPOINT, or file:///path.",
+        ))
+}
+
+fn bucket_row(t: Tokens, info: &StorageInfo) -> Div {
+    let now = SystemTime::now();
+    let last_write = info
+        .last_flush
+        .map(|ts| ago(from_timestamp(Some(ts)), now))
+        .unwrap_or_else(|| "not yet".into());
+    let (status, color) = if !info.last_error.is_empty() {
+        ("Error", t.err)
+    } else if info.last_flush.is_some() {
+        ("Healthy", t.ok)
+    } else {
+        ("Waiting", t.fg3)
+    };
+    let objects = format!(
+        "{}{}",
+        group_digits(info.objects as usize),
+        if info.truncated { "+" } else { "" }
+    );
+    div()
+        .border_t_1()
+        .border_color(t.line)
+        .child(
+            div()
+                .h(px(48.))
+                .px(px(18.))
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .text_size(px(13.))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
+                        .font_family(MONO)
+                        .text_size(px(12.5))
+                        .child(info.location.clone()),
+                )
+                .child(
+                    div()
+                        .w(px(150.))
+                        .flex_none()
+                        .text_color(t.fg2)
+                        .child(info.provider.clone()),
+                )
+                .child(
+                    div()
+                        .w(px(90.))
+                        .flex_none()
+                        .font_family(MONO)
+                        .text_size(px(12.5))
+                        .child(objects),
+                )
+                .child(div().w(px(110.)).flex_none().text_color(t.fg2).child(last_write))
+                .child(
+                    div()
+                        .w(px(110.))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .gap(px(7.))
+                        .child(dot(color, 7.))
+                        .child(status),
+                ),
+        )
+        .when(!info.last_error.is_empty(), |el| {
+            el.child(
+                div()
+                    .mx(px(18.))
+                    .mb(px(14.))
+                    .px(px(12.))
+                    .py(px(9.))
+                    .rounded(px(7.))
+                    .bg(t.errbg)
+                    .text_color(t.err)
+                    .text_size(px(12.5))
+                    .child(info.last_error.clone()),
+            )
+        })
+}
+
+/// One read-only server setting: what it does, its current value, and the flag that sets it.
+fn setting_row(
+    t: Tokens,
+    title: &'static str,
+    desc: &'static str,
+    value: String,
+    flag: &'static str,
+    first: bool,
+) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(20.))
+        .px(px(18.))
+        .py(px(16.))
+        .when(!first, |el| el.border_t_1().border_color(t.line))
+        .child(
+            div()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .gap(px(3.))
+                .child(div().text_size(px(13.5)).child(title))
+                .child(div().text_size(px(12.5)).text_color(t.fg3).child(desc)),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .items_end()
+                .gap(px(3.))
+                .child(div().text_size(px(14.)).font_weight(FontWeight::MEDIUM).child(value))
+                .child(
+                    div()
+                        .font_family(MONO)
+                        .text_size(px(11.5))
+                        .text_color(t.fg3)
+                        .child(flag),
+                ),
+        )
 }
 
 impl Workspace {
@@ -341,124 +562,98 @@ impl Workspace {
 
     pub(super) fn render_storage(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = tokens(cx);
-        let oldest = self
+        let info = match &self.storage {
+            Some(Ok(info)) if info.enabled => Some(info.clone()),
+            _ => None,
+        };
+        let oldest_memory = self
             .oldest_record()
-            .map(|time| {
-                let local: DateTime<Local> = time.into();
-                (local.format("%b %-d").to_string(), local.format(" %Y").to_string())
-            })
+            .map(day_and_year)
             .unwrap_or_else(|| ("—".into(), String::new()));
 
-        let stats = card(t)
-            .flex()
-            .child(
-                stat(t, "In-memory buffer", Icon::Memory, group_digits(BUFFER), " lines")
-                    .border_r_1()
-                    .border_color(t.line),
-            )
-            .child(
-                stat(t, "Archived", Icon::Archive, "—".into(), "")
-                    .border_r_1()
-                    .border_color(t.line),
-            )
-            .child(stat(
+        let mut stats = card(t).flex().child(
+            stat(t, "In-memory buffer", Icon::Memory, group_digits(BUFFER), " lines")
+                .border_r_1()
+                .border_color(t.line),
+        );
+        stats = stats.child(
+            stat(
                 t,
                 "Oldest in memory",
                 Icon::ClockCounterClockwise,
-                oldest.0,
-                oldest.1,
-            ));
+                oldest_memory.0,
+                oldest_memory.1,
+            )
+            .when(info.is_some(), |el| el.border_r_1().border_color(t.line)),
+        );
+        if let Some(info) = &info {
+            let (size, unit) = format_bytes(info.bytes);
+            let oldest = info
+                .oldest
+                .map(|ts| day_and_year(from_timestamp(Some(ts))))
+                .unwrap_or_else(|| ("—".into(), String::new()));
+            stats = stats
+                .child(
+                    stat(t, "In bucket", Icon::Archive, size, unit)
+                        .border_r_1()
+                        .border_color(t.line),
+                )
+                .child(stat(t, "Oldest in bucket", Icon::Cylinder, oldest.0, oldest.1));
+        }
 
-        let buckets = card(t)
-            .child(table_head(
+        let bucket = match &self.storage {
+            None => card(t).child(empty_state(t, Icon::Cylinder, "Checking the server…", None)),
+            Some(Err(error)) => card(t).child(empty_state(
                 t,
-                &[
-                    ("Bucket", 0.),
-                    ("Provider", 0.),
-                    ("Region", 0.),
-                    ("Size", 90.),
-                    ("Status", 110.),
-                ],
-            ))
-            .child(
-                div()
-                    .px(px(18.))
-                    .py(px(28.))
-                    .border_t_1()
-                    .border_color(t.line)
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(6.))
-                    .child(icon(Icon::Cylinder, 22., t.fg3))
-                    .child(
-                        div()
-                            .text_size(px(13.5))
-                            .font_weight(FontWeight::MEDIUM)
-                            .child("No buckets connected"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.5))
-                            .text_color(t.fg3)
-                            .child("Archiving to S3, Google Cloud Storage, R2 and MinIO is on the roadmap."),
-                    ),
-            );
+                Icon::XCircle,
+                "Couldn’t read storage",
+                Some(error.clone().into()),
+            )),
+            Some(Ok(info)) if !info.enabled => card(t).child(archive_setup(t)),
+            Some(Ok(info)) => card(t)
+                .child(table_head(
+                    t,
+                    &[
+                        ("Bucket", 0.),
+                        ("Provider", 150.),
+                        ("Objects", 90.),
+                        ("Last write", 110.),
+                        ("Status", 110.),
+                    ],
+                ))
+                .child(bucket_row(t, info)),
+        };
 
-        let retention_row =
-            |title: &'static str, desc: &'static str, options: &[&'static str], current: &'static str, first: bool| {
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(20.))
-                    .px(px(18.))
-                    .py(px(16.))
-                    .when(!first, |el| el.border_t_1().border_color(t.line))
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .flex_col()
-                            .gap(px(3.))
-                            .child(div().text_size(px(13.5)).child(title))
-                            .child(div().text_size(px(12.5)).text_color(t.fg3).child(desc)),
-                    )
-                    .child(segmented(
-                        t,
-                        options.iter().map(|label| {
-                            segment(
-                                t,
-                                SharedString::from(format!("{title}-{label}")),
-                                (*label).into(),
-                                None,
-                                *label == current,
-                            )
-                            .font_family(MONO)
-                            .text_size(px(12.))
-                            .cursor_default()
-                            .into_any_element()
-                        }),
-                    ))
+        let retention = info.as_ref().map(|info| {
+            let keep = match info.retention_days {
+                0 => "Forever".to_string(),
+                1 => "1 day".to_string(),
+                days => format!("{days} days"),
             };
-        let retention = div()
-            .rounded(px(10.))
-            .border_1()
-            .border_color(t.line2)
-            .opacity(0.55)
-            .child(retention_row(
-                "Archive to bucket after",
-                "Lines older than this leave memory and are written as compressed chunks.",
-                &["15m", "1h", "6h", "24h"],
-                "1h",
-                true,
-            ))
-            .child(retention_row(
-                "Delete from bucket after",
-                "Applied as a lifecycle rule on every connected bucket.",
-                &["30d", "90d", "1y", "Never"],
-                "90d",
-                false,
-            ));
+            card(t)
+                .child(setting_row(
+                    t,
+                    "Write to the bucket every",
+                    "New lines are batched in memory and written as one compressed chunk.",
+                    format!("{}s", info.flush_seconds),
+                    "--archive-flush-secs",
+                    true,
+                ))
+                .child(setting_row(
+                    t,
+                    "Keep archived logs for",
+                    "Once an hour the server deletes whole days older than this.",
+                    keep,
+                    "--retention-days",
+                    false,
+                ))
+        });
+
+        let subtitle = if info.is_some() {
+            "Live lines stay in memory, and every line is also archived to your bucket."
+        } else {
+            "Live lines stay in memory. Point the server at a bucket to keep them for as long as you want."
+        };
 
         div()
             .id("storage")
@@ -467,11 +662,13 @@ impl Workspace {
             .child(page_header(
                 t,
                 "Storage",
-                "Live lines stay in memory. Everything older will land in buckets you own.",
+                subtitle,
                 Some(
-                    primary_button(t, "connect-bucket", "Connect bucket", Some(Icon::Plus))
-                        .opacity(0.5)
-                        .cursor_default()
+                    outline_button(t, "refresh-storage", "Refresh", Some(Icon::ArrowClockwise))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.client.fetch_storage();
+                            cx.notify();
+                        }))
                         .into_any_element(),
                 ),
             ))
@@ -489,17 +686,19 @@ impl Workspace {
                             .flex()
                             .flex_col()
                             .gap(px(12.))
-                            .child(section(t, "Buckets", true))
-                            .child(buckets),
+                            .child(section(t, "Bucket", false))
+                            .child(bucket),
                     )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(12.))
-                            .child(section(t, "Retention", true))
-                            .child(retention),
-                    ),
+                    .when_some(retention, |el, retention| {
+                        el.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(12.))
+                                .child(section(t, "Retention", false))
+                                .child(retention),
+                        )
+                    }),
             )
     }
 
@@ -725,5 +924,34 @@ impl Workspace {
                             .on_click(|_, _, cx| cx.open_url(REPO_URL)),
                     ),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, SystemTime};
+
+    use super::{ago, format_bytes};
+
+    #[test]
+    fn formats_bytes_in_binary_units() {
+        assert_eq!(format_bytes(0), ("0".into(), " bytes".into()));
+        assert_eq!(format_bytes(1023), ("1023".into(), " bytes".into()));
+        assert_eq!(format_bytes(1536), ("1.5".into(), " KB".into()));
+        assert_eq!(format_bytes(250 * 1024 * 1024), ("250".into(), " MB".into()));
+        assert_eq!(format_bytes(3 * 1024u64.pow(4)), ("3.0".into(), " TB".into()));
+    }
+
+    #[test]
+    fn says_how_long_ago() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let before = |secs| now - Duration::from_secs(secs);
+        assert_eq!(ago(before(2), now), "just now");
+        assert_eq!(ago(before(42), now), "42s ago");
+        assert_eq!(ago(before(5 * 60 + 9), now), "5m ago");
+        assert_eq!(ago(before(3 * 3600), now), "3h ago");
+        assert_eq!(ago(before(2 * 86_400), now), "2d ago");
+        // A clock that jumped backwards reads as now, not as a panic.
+        assert_eq!(ago(now + Duration::from_secs(30), now), "just now");
     }
 }

@@ -131,3 +131,42 @@ async fn reopening_a_directory_finds_earlier_chunks() {
 fn rejects_unknown_schemes() {
     assert!(Archive::open("ftp://example.com/logs").is_err());
 }
+
+#[tokio::test]
+async fn query_skips_what_the_client_holds_but_returns_removed_containers() {
+    let archive = Archive::open("memory://").unwrap();
+    let from = |origin: &str, secs: u64| LogRecord {
+        origin: origin.into(),
+        ..line(secs, Level::Info, &format!("{origin} at {secs}"))
+    };
+    // "api" is still running; "batch" ran in between and has been removed.
+    let records: Vec<_> = (0..10)
+        .map(|i| from("api", i * 60))
+        .chain((0..3).map(|i| from("batch", 200 + i * 60)))
+        .collect();
+    archive.write_chunk(&records).await.unwrap();
+
+    // The client holds api's lines from minute 5 on, and nothing from batch.
+    let mut filter = Filter::new("");
+    filter.skip_from.insert("api".into(), at(5 * 60));
+    let got: Vec<String> = archive
+        .query(&filter, 10_000)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.body)
+        .collect();
+    assert_eq!(
+        got,
+        [
+            "api at 0",
+            "api at 60",
+            "api at 120",
+            "api at 180",
+            "batch at 200",
+            "api at 240",
+            "batch at 260",
+            "batch at 320",
+        ]
+    );
+}

@@ -2,6 +2,7 @@
 //!
 //! GPUI runs its own executor, and tonic needs tokio, so the two meet over a channel.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -54,7 +55,15 @@ impl Client {
 
     /// Asks the server's archive for lines in `[from, to]`; the answer arrives as
     /// [`ClientEvent::Archive`] with the same `request` number.
-    pub fn query_archive(&self, request: u64, from: Option<SystemTime>, to: SystemTime) {
+    /// Archived lines in `from..=to`, except each origin's lines from its `skip_from` time on,
+    /// which are already in memory.
+    pub fn query_archive(
+        &self,
+        request: u64,
+        from: Option<SystemTime>,
+        to: SystemTime,
+        skip_from: HashMap<String, SystemTime>,
+    ) {
         let (connection, tx) = (self.connection.clone(), self.tx.clone());
         self.runtime.spawn(async move {
             let result = async {
@@ -64,6 +73,10 @@ impl Client {
                         from: from.map(telelog_proto::to_timestamp),
                         to: Some(telelog_proto::to_timestamp(to)),
                         limit: ARCHIVE_LIMIT,
+                        skip_from: skip_from
+                            .into_iter()
+                            .map(|(origin, t)| (origin, telelog_proto::to_timestamp(t)))
+                            .collect(),
                         ..Default::default()
                     })
                     .await?
@@ -98,6 +111,9 @@ impl Client {
 /// For one-off requests, the server's own message reads best ("no archive bucket configured").
 fn describe_request(e: &anyhow::Error) -> String {
     match e.downcast_ref::<tonic::Status>() {
+        Some(status) if status.code() == tonic::Code::Unimplemented => {
+            "this server is too old to support this; update telelog-server".into()
+        }
         Some(status) if status.code() != tonic::Code::Unauthenticated => status.message().to_string(),
         _ => describe(e),
     }

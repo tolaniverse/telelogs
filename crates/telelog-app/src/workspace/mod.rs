@@ -102,9 +102,10 @@ pub struct Workspace {
 
     entries: Vec<Entry>,
     next_id: u64,
-    /// Oldest timestamp among `entries`; archived lines at or after it are already live.
-    live_oldest: Option<SystemTime>,
-    /// Lines from the archive bucket, older than the live buffer, shown before it.
+    /// Oldest timestamp in `entries` per origin; that origin's archived lines from then on are
+    /// already live.
+    live_starts: HashMap<String, SystemTime>,
+    /// Lines from the archive bucket that aren't in the live buffer, merged in by time.
     archived: Vec<Entry>,
     next_archived_id: u64,
     archive: ArchiveState,
@@ -207,7 +208,7 @@ impl Workspace {
             open_groups: HashSet::from([SourceKind::Docker, SourceKind::Kubernetes]),
             entries: Vec::new(),
             next_id: 1,
-            live_oldest: None,
+            live_starts: HashMap::new(),
             archived: Vec::new(),
             next_archived_id: ARCHIVED_IDS,
             archive: ArchiveState::Off,
@@ -264,7 +265,7 @@ impl Workspace {
                 ClientEvent::Connected { targets } => {
                     // The server resends backlog on reconnect, so start fresh.
                     self.entries.clear();
-                    self.live_oldest = None;
+                    self.live_starts.clear();
                     self.selected = None;
                     rebuild = true;
                     self.client.fetch_storage();
@@ -286,9 +287,10 @@ impl Workspace {
                     };
                     self.next_id += 1;
                     let timestamp = entry.record.timestamp;
-                    if self.live_oldest.is_none_or(|oldest| timestamp < oldest) {
-                        self.live_oldest = Some(timestamp);
-                        // The boundary hiding archived duplicates moved.
+                    let start = self.live_starts.entry(entry.record.origin.clone()).or_insert(timestamp);
+                    if timestamp <= *start {
+                        *start = timestamp;
+                        // The boundary hiding this origin's archived duplicates moved.
                         rebuild |= !self.archived.is_empty();
                     }
                     if self.passes(&entry) {
@@ -333,7 +335,14 @@ impl Workspace {
         if self.entries.len() > BUFFER {
             let excess = self.entries.len() - BUFFER;
             self.entries.drain(..excess);
-            self.live_oldest = self.entries.iter().map(|e| e.record.timestamp).min();
+            self.live_starts.clear();
+            for e in &self.entries {
+                let start = self
+                    .live_starts
+                    .entry(e.record.origin.clone())
+                    .or_insert(e.record.timestamp);
+                *start = (*start).min(e.record.timestamp);
+            }
             rebuild = true;
         }
         if rebuild {
@@ -406,22 +415,40 @@ impl Workspace {
     }
 
     fn rebuild_visible(&mut self) {
-        let archived = self
-            .archived
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| self.live_oldest.is_none_or(|oldest| e.record.timestamp < oldest) && self.passes(e))
-            .map(|(i, _)| i);
-        let live = self
-            .entries
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| self.passes(e))
-            .map(|(i, _)| self.archived.len() + i);
-        self.visible = archived.chain(live).collect();
+        let archived: Vec<usize> = (0..self.archived.len())
+            .filter(|&i| {
+                let e = &self.archived[i];
+                let duplicate = self
+                    .live_starts
+                    .get(&e.record.origin)
+                    .is_some_and(|&start| e.record.timestamp >= start);
+                !duplicate && self.passes(e)
+            })
+            .collect();
+        let live: Vec<usize> = (0..self.entries.len())
+            .filter(|&i| self.passes(&self.entries[i]))
+            .map(|i| self.archived.len() + i)
+            .collect();
+        // Both are in time order; merge them so a removed container's archived lines sit
+        // among the live lines of the same moment.
+        let mut visible = Vec::with_capacity(archived.len() + live.len());
+        let (mut a, mut l) = (archived.into_iter().peekable(), live.into_iter().peekable());
+        while let (Some(&ai), Some(&li)) = (a.peek(), l.peek()) {
+            if self.entry(ai).record.timestamp <= self.entry(li).record.timestamp {
+                visible.push(ai);
+                a.next();
+            } else {
+                visible.push(li);
+                l.next();
+            }
+        }
+        visible.extend(a);
+        visible.extend(l);
+        self.visible = visible;
     }
 
-    /// Fetches the part of the time range older than the live buffer from the archive bucket.
+    /// Fetches the time range from the archive bucket, minus what the live buffer already holds
+    /// for each origin.
     pub(super) fn load_archive(&mut self) {
         self.archive_request += 1;
         self.archived.clear();
@@ -432,15 +459,13 @@ impl Workspace {
         }
         let now = SystemTime::now();
         let (from, to) = self.range.bounds(now);
-        let mut to = to.unwrap_or(now);
-        if let Some(oldest) = self.live_oldest {
-            to = to.min(oldest.checked_sub(Duration::from_nanos(1)).unwrap_or(oldest));
-        }
+        let to = to.unwrap_or(now);
         if from.is_some_and(|from| from > to) {
             return;
         }
         self.archive = ArchiveState::Loading;
-        self.client.query_archive(self.archive_request, from, to);
+        self.client
+            .query_archive(self.archive_request, from, to, self.live_starts.clone());
     }
 
     fn scroll_to_end_if_following(&self) {
@@ -521,7 +546,7 @@ impl Workspace {
 
     fn clear_stream(&mut self, cx: &mut Context<Self>) {
         self.entries.clear();
-        self.live_oldest = None;
+        self.live_starts.clear();
         self.archived.clear();
         self.archive = ArchiveState::Off;
         self.archive_request += 1;

@@ -33,6 +33,11 @@ fn query_filter(request: &v1::QueryRequest) -> Filter {
     }
     filter.from = request.from.map(|t| from_timestamp(Some(t)));
     filter.to = request.to.map(|t| from_timestamp(Some(t)));
+    filter.skip_from = request
+        .skip_from
+        .iter()
+        .map(|(origin, t)| (origin.clone(), from_timestamp(Some(*t))))
+        .collect();
     filter
 }
 

@@ -1,6 +1,7 @@
 //! The log model shared by every Telelogs component.
 
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
@@ -144,6 +145,9 @@ pub struct Filter {
     pub from: Option<SystemTime>,
     /// Inclusive upper bound on `LogRecord::timestamp`.
     pub to: Option<SystemTime>,
+    /// Per origin, excludes records at or after this time, because the caller already holds
+    /// that origin's lines from there on.
+    pub skip_from: HashMap<String, SystemTime>,
 }
 
 impl Filter {
@@ -155,7 +159,11 @@ impl Filter {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.needle.is_empty() && self.min_level.is_none() && self.from.is_none() && self.to.is_none()
+        self.needle.is_empty()
+            && self.min_level.is_none()
+            && self.from.is_none()
+            && self.to.is_none()
+            && self.skip_from.is_empty()
     }
 
     pub fn matches(&self, record: &LogRecord) -> bool {
@@ -165,6 +173,13 @@ impl Filter {
             return false;
         }
         if self.from.is_some_and(|from| record.timestamp < from) || self.to.is_some_and(|to| record.timestamp > to) {
+            return false;
+        }
+        if self
+            .skip_from
+            .get(&record.origin)
+            .is_some_and(|&skip| record.timestamp >= skip)
+        {
             return false;
         }
         self.needle.is_empty()
@@ -203,6 +218,23 @@ mod tests {
         assert!(Filter::new("API").matches(&r));
         assert!(!Filter::new("postgres").matches(&r));
         assert!(Filter::new("").matches(&r));
+    }
+
+    #[test]
+    fn filter_skips_lines_an_origin_already_holds() {
+        let at = |secs| SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+        let mut filter = Filter::new("");
+        filter.skip_from.insert("api-1".into(), at(100));
+        let line = |origin, secs| LogRecord {
+            timestamp: at(secs),
+            ..record(origin, "x")
+        };
+        assert!(filter.matches(&line("api-1", 99)));
+        assert!(!filter.matches(&line("api-1", 100)));
+        assert!(!filter.matches(&line("api-1", 500)));
+        // Other origins, such as a removed container, are untouched.
+        assert!(filter.matches(&line("gone", 500)));
+        assert!(!filter.is_empty());
     }
 
     #[test]

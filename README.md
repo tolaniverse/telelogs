@@ -52,6 +52,32 @@ docker run -d --rm --name telelog-demo alpine sh -c \
   'i=0; while true; do i=$((i+1)); echo "INFO request $i ok"; sleep 0.5; done'
 ```
 
+## Keeping logs in a bucket
+
+The server keeps the newest lines in memory. Give it a bucket and it also archives every line there, so
+logs outlive the buffer, restarts and `docker rm`. Pick a time range in the app and it reads whatever the
+buffer doesn't hold from the bucket.
+
+```sh
+AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_REGION=eu-west-1 \
+telelog-server --archive-url s3://acme-logs/prod --retention-days 90
+```
+
+| Flag | Environment | Default | |
+|---|---|---|---|
+| `--archive-url` | `TELELOG_ARCHIVE_URL` | off | `s3://bucket/prefix`, `gs://bucket/prefix` or `file:///path` |
+| `--archive-flush-secs` | `TELELOG_ARCHIVE_FLUSH_SECS` | `60` | Seconds between writes, 1 to 3600 |
+| `--retention-days` | `TELELOG_RETENTION_DAYS` | `90` | Days to keep; `0` keeps everything |
+
+Credentials come from each provider's usual environment variables. For Cloudflare R2, MinIO or another
+S3-compatible store, also set `AWS_ENDPOINT` (and `AWS_ALLOW_HTTP=true` for plain `http://`); for Google Cloud
+Storage, `GOOGLE_SERVICE_ACCOUNT`. The bucket must already exist.
+
+Lines are written as zstd-compressed JSON lines under `<prefix>/v1/<YYYY-MM-DD>/<HH>/`, with each file named
+after the time range it covers. A `_checkpoint.json` records the newest archived line, so a restart resumes
+from there with no gap and no duplicates. Once an hour the server deletes whole days older than the retention.
+The app's Storage screen shows the bucket's size, oldest day, last write and any error.
+
 ## License
 
 Telelogs is open source under two licenses:

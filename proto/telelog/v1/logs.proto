@@ -87,6 +87,9 @@ message QueryRequest {
   Level min_level = 4;
   // Most lines to return (the newest in the range). 0 uses the server default.
   uint32 limit = 5;
+  // Per origin, skip lines at or after this time: the client already holds them live.
+  // Origins not listed are returned in full, so lines from removed containers come back.
+  map<string, google.protobuf.Timestamp> skip_from = 6;
 }
 
 message GetStorageRequest {}
