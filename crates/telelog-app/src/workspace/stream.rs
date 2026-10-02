@@ -130,7 +130,7 @@ impl Workspace {
                                     .overflow_hidden()
                                     .text_ellipsis()
                                     .text_color(t.fg2)
-                                    .child(record.origin.clone()),
+                                    .child(super::display_name(record.source, &record.origin, &record.labels)),
                             ),
                     )
                     .child(

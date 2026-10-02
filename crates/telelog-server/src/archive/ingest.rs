@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use futures::StreamExt;
 use telelog_core::LogRecord;
-use telelog_sources::{DockerSource, LiveStart};
+use telelog_sources::{LiveStart, Sources};
 
 use super::Archive;
 
@@ -17,10 +17,10 @@ const MAX_PENDING_LINES: usize = 500_000;
 const RETRY_DELAY: Duration = Duration::from_secs(5);
 const SWEEP_EVERY: Duration = Duration::from_secs(3600);
 
-/// Archives every container's output until the task is dropped, reconnecting to Docker as needed.
-pub async fn run(archive: Arc<Archive>, docker: DockerSource) {
+/// Archives every source's output until the task is dropped, reconnecting as needed.
+pub async fn run(archive: Arc<Archive>, sources: Sources) {
     loop {
-        if let Err(e) = ingest_once(&archive, &docker).await {
+        if let Err(e) = ingest_once(&archive, &sources).await {
             tracing::warn!("archive ingest stopped: {e:#}");
             archive.record_error(&e);
         }
@@ -47,7 +47,7 @@ pub async fn sweep_forever(archive: Arc<Archive>) {
     }
 }
 
-async fn ingest_once(archive: &Archive, docker: &DockerSource) -> Result<()> {
+async fn ingest_once(archive: &Archive, sources: &Sources) -> Result<()> {
     // Resume from the newest archived line, so lines written while the server was down still
     // land in the bucket. Docker's `since` has second precision; exact duplicates are skipped.
     let resume_after = archive.checkpoint().await?;
@@ -55,7 +55,7 @@ async fn ingest_once(archive: &Archive, docker: &DockerSource) -> Result<()> {
         Some(t) => LiveStart::Since(t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)),
         None => LiveStart::Backlog(0),
     };
-    let mut records = docker.tail_live(start).await?;
+    let mut records = sources.tail_live(start).await?;
     tracing::info!(location = %archive.location, "archiving logs");
 
     let mut pending: Vec<LogRecord> = Vec::new();

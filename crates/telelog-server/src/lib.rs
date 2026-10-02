@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use telelog_proto::LogServiceServer;
-use telelog_sources::DockerSource;
+use telelog_sources::Sources;
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::{Identity, Server, ServerTlsConfig};
@@ -23,7 +23,7 @@ pub struct TlsFiles {
 pub struct Config {
     pub token: Option<String>,
     pub tls: Option<TlsFiles>,
-    /// When set, every container's output is archived to this bucket and can be queried.
+    /// When set, every source's output is archived to this bucket and can be queried.
     pub archive: Option<Arc<archive::Archive>>,
 }
 
@@ -31,7 +31,7 @@ pub struct Config {
 pub async fn serve(
     listener: TcpListener,
     config: Config,
-    docker: DockerSource,
+    sources: Sources,
     shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
     // object_store and tonic enable different rustls crypto backends; pick one explicitly.
@@ -47,13 +47,13 @@ pub async fn serve(
     // Archiving runs for as long as the server does, whether or not any app is connected.
     let background: Vec<_> = match &config.archive {
         Some(archive) => vec![
-            tokio::spawn(archive::ingest::run(archive.clone(), docker.clone())),
+            tokio::spawn(archive::ingest::run(archive.clone(), sources.clone())),
             tokio::spawn(archive::ingest::sweep_forever(archive.clone())),
         ],
         None => Vec::new(),
     };
     let service = LogServiceServer::with_interceptor(
-        service::Logs::new(docker, config.archive.clone()),
+        service::Logs::new(sources, config.archive.clone()),
         auth::TokenAuth::new(config.token),
     );
     builder

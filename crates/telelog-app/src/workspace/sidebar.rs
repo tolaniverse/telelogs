@@ -171,7 +171,7 @@ impl Workspace {
                                         .font_family(MONO)
                                         .text_size(px(11.5))
                                         .text_color(if on { t.fg } else { t.fg3 })
-                                        .child(target.name.clone()),
+                                        .child(super::display_name(target.source, &target.name, &target.labels)),
                                 )
                         }))
                 });

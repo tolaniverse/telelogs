@@ -1,4 +1,4 @@
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use telelog_core::SourceKind;
@@ -20,6 +20,8 @@ pub struct Inputs {
     vm_host: Entity<InputState>,
     vm_files: Entity<InputState>,
     backlog: Entity<InputState>,
+    /// Re-renders the dialog as the Kubernetes fields change, so the command stays current.
+    _subscriptions: Vec<Subscription>,
 }
 
 impl Inputs {
@@ -32,15 +34,34 @@ impl Inputs {
                 state
             })
         };
+        let docker_endpoint = input("unix:///var/run/docker.sock", "unix:///var/run/docker.sock");
+        let docker_labels = input("com.docker.compose.project=shop", "");
+        let kube_context = input("current context", "");
+        let kube_namespaces = input("all namespaces", "");
+        let kube_selector = input("app.kubernetes.io/part-of=shop", "");
+        let vm_host = input("deploy@edge-03.internal", "");
+        let vm_files = input("/var/log/syslog, /var/log/nginx/*.log", "");
+        let backlog = input("500", &BACKLOG.to_string());
+        let _subscriptions = [&kube_context, &kube_namespaces, &kube_selector]
+            .into_iter()
+            .map(|input| {
+                cx.subscribe(input, |_, _, event, cx| {
+                    if let InputEvent::Change = event {
+                        cx.notify();
+                    }
+                })
+            })
+            .collect();
         Inputs {
-            docker_endpoint: input("unix:///var/run/docker.sock", "unix:///var/run/docker.sock"),
-            docker_labels: input("com.docker.compose.project=shop", ""),
-            kube_context: input("prod-eu-west-1", ""),
-            kube_namespaces: input("prod, staging", ""),
-            kube_selector: input("app.kubernetes.io/part-of=shop", ""),
-            vm_host: input("deploy@edge-03.internal", ""),
-            vm_files: input("/var/log/syslog, /var/log/nginx/*.log", ""),
-            backlog: input("500", &BACKLOG.to_string()),
+            docker_endpoint,
+            docker_labels,
+            kube_context,
+            kube_namespaces,
+            kube_selector,
+            vm_host,
+            vm_files,
+            backlog,
+            _subscriptions,
         }
     }
 }
@@ -50,6 +71,37 @@ fn kind_description(kind: SourceKind) -> &'static str {
         SourceKind::Docker => "Containers on a daemon",
         SourceKind::Kubernetes => "Pods across namespaces",
         SourceKind::Vm => "Files over SSH",
+    }
+}
+
+/// The `telelog-server` command for the Kubernetes fields. Sources are configured on the
+/// server, so the dialog hands over the command rather than pretending to connect.
+pub fn kube_command(context: &str, namespaces: &str, selector: &str) -> String {
+    let mut command = String::from("telelog-server --kubernetes");
+    let context = context.trim();
+    if !context.is_empty() {
+        command.push_str(&format!(" --kube-context {}", shell_quote(context)));
+    }
+    let namespaces: Vec<&str> = namespaces.split(',').map(str::trim).filter(|n| !n.is_empty()).collect();
+    if !namespaces.is_empty() {
+        command.push_str(&format!(" --namespace {}", shell_quote(&namespaces.join(","))));
+    }
+    let selector = selector.trim();
+    if !selector.is_empty() {
+        command.push_str(&format!(" --selector {}", shell_quote(selector)));
+    }
+    command
+}
+
+/// Leaves plain words alone and single-quotes anything a shell would split or expand.
+fn shell_quote(value: &str) -> String {
+    if value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "-_.,/:=@".contains(c))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
     }
 }
 
@@ -128,6 +180,11 @@ impl Workspace {
                     )
             }));
 
+        let kube_cmd = kube_command(
+            &inputs.kube_context.read(cx).value(),
+            &inputs.kube_namespaces.read(cx).value(),
+            &inputs.kube_selector.read(cx).value(),
+        );
         let form = div()
             .px(px(22.))
             .pb(px(20.))
@@ -139,9 +196,33 @@ impl Workspace {
                     .child(field(t, "Docker endpoint", None, &inputs.docker_endpoint))
                     .child(field(t, "Label filter", Some("(optional)"), &inputs.docker_labels)),
                 SourceKind::Kubernetes => el
-                    .child(field(t, "Kubeconfig context", None, &inputs.kube_context))
-                    .child(field(t, "Namespaces", None, &inputs.kube_namespaces))
-                    .child(field(t, "Label selector", Some("(optional)"), &inputs.kube_selector)),
+                    .child(field(t, "Kubeconfig context", Some("(optional)"), &inputs.kube_context))
+                    .child(field(
+                        t,
+                        "Namespaces",
+                        Some("(optional, comma separated)"),
+                        &inputs.kube_namespaces,
+                    ))
+                    .child(field(t, "Label selector", Some("(optional)"), &inputs.kube_selector))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.))
+                            .child(div().text_size(px(12.5)).text_color(t.fg2).child("Run the server with"))
+                            .child(
+                                div()
+                                    .px(px(12.))
+                                    .py(px(10.))
+                                    .rounded(px(8.))
+                                    .bg(t.bg2)
+                                    .border_1()
+                                    .border_color(t.line)
+                                    .font_family(MONO)
+                                    .text_size(px(12.))
+                                    .child(kube_cmd.clone()),
+                            ),
+                    ),
                 SourceKind::Vm => el.child(field(t, "Host", None, &inputs.vm_host)).child(field(
                     t,
                     "Files to tail",
@@ -192,8 +273,17 @@ impl Workspace {
                     .on_click(cx.listener(|this, _, window, cx| this.close_overlays(window, cx)))
                     .into_any_element(),
             ),
-            _ => (
-                "Kubernetes and VM sources are coming soon.",
+            SourceKind::Kubernetes => (
+                "Configured on the server.",
+                primary_button(t, "add-copy", "Copy command", Some(Icon::Copy))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(kube_cmd.clone()));
+                        this.close_overlays(window, cx);
+                    }))
+                    .into_any_element(),
+            ),
+            SourceKind::Vm => (
+                "VM sources are coming soon.",
                 primary_button(t, "add-connect", "Connect", None)
                     .opacity(0.5)
                     .cursor_default()
@@ -256,6 +346,7 @@ impl Workspace {
                     .child(
                         div()
                             .flex_1()
+                            .min_w_0()
                             .flex()
                             .items_center()
                             .gap(px(6.))
@@ -275,5 +366,27 @@ impl Workspace {
                     .child(primary),
             );
         modal(t, panel, None, cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::kube_command;
+
+    #[test]
+    fn builds_the_server_command() {
+        assert_eq!(kube_command("", "", ""), "telelog-server --kubernetes");
+        assert_eq!(
+            kube_command(" prod-eu ", "shop, payments ,", "app=api"),
+            "telelog-server --kubernetes --kube-context prod-eu --namespace shop,payments --selector app=api"
+        );
+        assert_eq!(
+            kube_command("", "", "tier in (web,api)"),
+            "telelog-server --kubernetes --selector 'tier in (web,api)'"
+        );
+        assert_eq!(
+            kube_command("it's", "", ""),
+            "telelog-server --kubernetes --kube-context 'it'\\''s'"
+        );
     }
 }

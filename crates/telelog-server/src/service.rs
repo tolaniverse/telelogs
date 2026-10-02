@@ -4,7 +4,7 @@ use std::sync::Arc;
 use futures::{Stream, StreamExt};
 use telelog_core::Filter;
 use telelog_proto::{LogService, from_timestamp, to_timestamp, v1};
-use telelog_sources::DockerSource;
+use telelog_sources::Sources;
 use tonic::{Request, Response, Status};
 
 use crate::archive::Archive;
@@ -15,13 +15,13 @@ const DEFAULT_QUERY_LIMIT: u32 = 5_000;
 const MAX_QUERY_LIMIT: u32 = 50_000;
 
 pub struct Logs {
-    docker: DockerSource,
+    sources: Sources,
     archive: Option<Arc<Archive>>,
 }
 
 impl Logs {
-    pub fn new(docker: DockerSource, archive: Option<Arc<Archive>>) -> Self {
-        Logs { docker, archive }
+    pub fn new(sources: Sources, archive: Option<Arc<Archive>>) -> Self {
+        Logs { sources, archive }
     }
 }
 
@@ -51,7 +51,7 @@ impl LogService for Logs {
         request: Request<v1::ListTargetsRequest>,
     ) -> Result<Response<v1::ListTargetsResponse>, Status> {
         let targets = self
-            .docker
+            .sources
             .list_targets(request.into_inner().all)
             .await
             .map_err(|e| Status::unavailable(format!("{e:#}")))?;
@@ -66,16 +66,16 @@ impl LogService for Logs {
         let request = request.into_inner();
         let backlog = request.backlog.min(MAX_BACKLOG);
 
-        // No explicit targets means "everything": follow new containers as they start too.
+        // No explicit targets means "everything": follow new containers and pods as they start too.
         let records = if request.target_ids.is_empty() {
             tracing::info!("live tail started");
-            self.docker
+            self.sources
                 .tail_live(telelog_sources::LiveStart::Backlog(backlog))
                 .await
                 .map_err(|e| Status::unavailable(format!("{e:#}")))?
         } else {
             let targets: Vec<_> = self
-                .docker
+                .sources
                 .list_targets(false)
                 .await
                 .map_err(|e| Status::unavailable(format!("{e:#}")))?
@@ -86,7 +86,7 @@ impl LogService for Logs {
                 return Err(Status::not_found("no running targets match the request"));
             }
             tracing::info!(count = targets.len(), "tail started");
-            self.docker.tail_many(&targets, backlog)
+            self.sources.tail_many(&targets, backlog)
         };
 
         let stream = records.map(|record| {
@@ -103,7 +103,7 @@ impl LogService for Logs {
         &self,
         _request: Request<v1::WatchTargetsRequest>,
     ) -> Result<Response<TargetStream>, Status> {
-        let stream = self.docker.watch_targets().map(|target| {
+        let stream = self.sources.watch_targets().map(|target| {
             target
                 .map(v1::Target::from)
                 .map_err(|e| Status::unavailable(format!("{e:#}")))

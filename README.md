@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/tolaniverse/telelogs/actions/workflows/ci.yml/badge.svg)](https://github.com/tolaniverse/telelogs/actions/workflows/ci.yml)
 
-Open-source log aggregator: a native desktop app (built with [GPUI](https://gpui.rs)) that streams logs from your Docker, Kubernetes and VM environments, with long retention in your own object-storage buckets.
+Open-source log aggregator: a native desktop app (built with [GPUI](https://gpui.rs)) that streams logs from your Docker containers and Kubernetes pods (VMs next), with long retention in your own object-storage buckets.
 
 ## Components
 
@@ -10,7 +10,7 @@ Open-source log aggregator: a native desktop app (built with [GPUI](https://gpui
 |---|---|
 | `telelog-core` | Shared log model (`LogRecord`, `Target`, `Filter`) |
 | `telelog-proto` | gRPC API (`proto/telelog/v1/logs.proto`) and conversions |
-| `telelog-sources` | Log sources. Docker today; Kubernetes and VMs next |
+| `telelog-sources` | Log sources: Docker and Kubernetes; VMs next |
 | `telelog-server` | Self-hostable server that collects logs and streams them to the app |
 | `telelog-app` | GPUI desktop client (`telelogs` binary) |
 
@@ -70,6 +70,39 @@ Try it with a noisy container:
 docker run -d --rm --name telelog-demo alpine sh -c \
   'i=0; while true; do i=$((i+1)); echo "INFO request $i ok"; sleep 0.5; done'
 ```
+
+## Kubernetes
+
+`--kubernetes` reads the logs of every pod: each container is a source named `namespace/pod/container`,
+pods are picked up as they start, and containers are followed again after a restart. The server uses the
+kubeconfig's current context, or its service account when it runs inside the cluster.
+
+```sh
+telelog-server --kubernetes                                # current context, every namespace
+telelog-server --kube-context prod --namespace shop,payments --selector app.kubernetes.io/part-of=shop
+```
+
+| Flag | Environment | |
+|---|---|---|
+| `--kubernetes` | `TELELOG_KUBERNETES` | Read pod logs |
+| `--kube-context` | `TELELOG_KUBE_CONTEXT` | Kubeconfig context to use; implies `--kubernetes` |
+| `--namespace` | `TELELOG_NAMESPACES` | Namespaces to read, comma separated; all by default |
+| `--selector` | `TELELOG_KUBE_SELECTOR` | Only pods matching this label selector |
+| `--no-docker` | `TELELOG_NO_DOCKER` | Don't read Docker containers |
+
+With Kubernetes on, a missing Docker daemon is only a warning, and containers that Kubernetes runs on the
+local daemon (Docker Desktop, OrbStack) are read through Kubernetes, not twice.
+
+To run the server inside the cluster, [`deploy/kubernetes/telelog-server.yaml`](deploy/kubernetes/telelog-server.yaml)
+has a read-only service account (pods: get, list, watch; pods/log: get), the deployment and a service:
+
+```sh
+kubectl apply -f deploy/kubernetes/telelog-server.yaml
+kubectl -n telelogs create secret generic telelog-server --from-literal=token=$(openssl rand -hex 32)
+kubectl -n telelogs port-forward svc/telelog-server 7070
+```
+
+To build the image yourself: `docker build -f docker/Dockerfile -t telelog-server .`
 
 ## Keeping logs in a bucket
 

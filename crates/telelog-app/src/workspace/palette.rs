@@ -108,7 +108,7 @@ impl Workspace {
                 .filter(|target| target.state == "running")
                 .map(|target| Command {
                     group: "Tail only…",
-                    label: target.name.clone(),
+                    label: super::display_name(target.source, &target.name, &target.labels),
                     glyph: kind_icon(target.source),
                     shortcut: "",
                     action: Action::Solo(target.name.clone()),

@@ -786,6 +786,25 @@ fn modal(t: crate::theme::Tokens, panel: impl IntoElement, top: Option<f32>, cx:
         .child(panel)
 }
 
+/// A short name for lists and log rows. Kubernetes targets are `namespace/pod/container`, too
+/// long to tell apart when cut off, so they show as `app/container` (or `pod/container`); the
+/// full name stays in the detail panel and on the Sources page.
+pub(super) fn display_name(
+    source: SourceKind,
+    name: &str,
+    labels: &std::collections::BTreeMap<String, String>,
+) -> String {
+    if source != SourceKind::Kubernetes {
+        return name.to_string();
+    }
+    let mut parts = name.splitn(3, '/').skip(1);
+    let (Some(pod), Some(container)) = (parts.next(), parts.next()) else {
+        return name.to_string();
+    };
+    let owner = labels.get("app").map_or(pod, String::as_str);
+    format!("{owner}/{container}")
+}
+
 #[cfg(test)]
 mod tests {
     use telelog_core::Level;
@@ -808,5 +827,25 @@ mod tests {
         assert_eq!(shown(LevelFilter::Warn), [Level::Warn]);
         assert_eq!(shown(LevelFilter::Info), [Level::Info]);
         assert_eq!(shown(LevelFilter::Debug), [Level::Trace, Level::Debug]);
+    }
+
+    #[test]
+    fn shortens_kubernetes_names() {
+        use std::collections::BTreeMap;
+        use telelog_core::SourceKind;
+
+        use super::display_name;
+        let app = BTreeMap::from([("app".to_string(), "api".to_string())]);
+        let none = BTreeMap::new();
+        assert_eq!(
+            display_name(SourceKind::Kubernetes, "shop/api-7d9f/web", &app),
+            "api/web"
+        );
+        assert_eq!(
+            display_name(SourceKind::Kubernetes, "shop/flaky/worker", &none),
+            "flaky/worker"
+        );
+        assert_eq!(display_name(SourceKind::Docker, "shop-api-1", &app), "shop-api-1");
+        assert_eq!(display_name(SourceKind::Kubernetes, "odd", &none), "odd");
     }
 }

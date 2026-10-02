@@ -10,5 +10,8 @@ anyhow.workspace = true
 bollard.workspace = true
 futures.workspace = true
 humantime = "2"
+k8s-openapi = { version = "0.28", features = ["earliest"] }
+kube = { version = "4.2", features = ["runtime"] }
 telelog-core.workspace = true
+tokio.workspace = true
 tracing.workspace = true

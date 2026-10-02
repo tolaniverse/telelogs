@@ -1,0 +1,96 @@
+# telelog-server inside a cluster, reading the logs of every pod.
+#
+#   kubectl apply -f telelog-server.yaml
+#   kubectl -n telelogs create secret generic telelog-server --from-literal=token=$(openssl rand -hex 32)
+#   kubectl -n telelogs port-forward svc/telelog-server 7070
+#
+# Then point the app at http://127.0.0.1:7070 with the same token. To read only some
+# namespaces, set TELELOG_NAMESPACES below; to archive, add TELELOG_ARCHIVE_URL and the
+# bucket's credentials (see the server docs).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: telelogs
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: telelog-server
+  namespace: telelogs
+---
+# Read-only: list and watch pods, and read their logs. Nothing else.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: telelog-server
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: telelog-server
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: telelog-server
+subjects:
+  - kind: ServiceAccount
+    name: telelog-server
+    namespace: telelogs
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telelog-server
+  namespace: telelogs
+  labels: {app.kubernetes.io/name: telelog-server}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: telelog-server}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: telelog-server}
+    spec:
+      serviceAccountName: telelog-server
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: telelog-server
+          image: ghcr.io/tolaniverse/telelog-server:latest
+          args: [--kubernetes, --no-docker]
+          env:
+            - name: TELELOG_TOKEN
+              valueFrom:
+                secretKeyRef: {name: telelog-server, key: token}
+            # - name: TELELOG_NAMESPACES
+            #   value: shop,payments
+          ports:
+            - {name: grpc, containerPort: 7070}
+          readinessProbe:
+            tcpSocket: {port: grpc}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: telelog-server
+  namespace: telelogs
+spec:
+  selector: {app.kubernetes.io/name: telelog-server}
+  ports:
+    - {name: grpc, port: 7070, targetPort: grpc}

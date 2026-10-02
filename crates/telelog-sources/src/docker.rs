@@ -24,13 +24,18 @@ pub enum LiveStart {
 #[derive(Clone)]
 pub struct DockerSource {
     docker: Docker,
+    /// Leave out containers that Kubernetes runs, because a Kubernetes source reads them.
+    skip_kubernetes: bool,
 }
 
 impl DockerSource {
     /// Connects using `DOCKER_HOST` or the platform's default socket.
     pub fn connect() -> Result<Self> {
         let docker = Docker::connect_with_local_defaults().context("connecting to Docker")?;
-        Ok(DockerSource { docker })
+        Ok(DockerSource {
+            docker,
+            skip_kubernetes: false,
+        })
     }
 
     /// Connects to a daemon over plain HTTP (`tcp://host:2375` or `http://host:2375`). Nothing is
@@ -38,7 +43,17 @@ impl DockerSource {
     pub fn connect_http(addr: &str) -> Result<Self> {
         let docker = Docker::connect_with_http(addr, 10, bollard::API_DEFAULT_VERSION)
             .with_context(|| format!("connecting to Docker at {addr}"))?;
-        Ok(DockerSource { docker })
+        Ok(DockerSource {
+            docker,
+            skip_kubernetes: false,
+        })
+    }
+
+    /// Skips containers that Kubernetes runs on this daemon (Docker Desktop, OrbStack, older
+    /// kubelets), which a Kubernetes source already reads under their pod names.
+    pub fn without_kubernetes(mut self) -> Self {
+        self.skip_kubernetes = true;
+        self
     }
 
     pub async fn list_targets(&self, all: bool) -> Result<Vec<Target>> {
@@ -51,6 +66,7 @@ impl DockerSource {
 
         Ok(containers
             .into_iter()
+            .filter(|c| wanted(self.skip_kubernetes, c.labels.as_ref()))
             .filter_map(|c| {
                 let id = c.id?;
                 let name = c
@@ -118,18 +134,23 @@ impl DockerSource {
                     .to_vec(),
             ),
         ]);
+        let skip_kubernetes = self.skip_kubernetes;
         self.docker
             .events(Some(EventsOptions {
                 filters: Some(filters),
                 ..Default::default()
             }))
-            .filter_map(|event| async move {
+            .filter_map(move |event| async move {
                 let event = match event.context("watching Docker events") {
                     Ok(event) => event,
                     Err(e) => return Some(Err(e)),
                 };
                 let state = state_after(event.action.as_deref()?)?;
-                target_from_event(event.actor?, state).map(Ok)
+                let actor = event.actor?;
+                if !wanted(skip_kubernetes, actor.attributes.as_ref()) {
+                    return None;
+                }
+                target_from_event(actor, state).map(Ok)
             })
             .boxed()
     }
@@ -140,16 +161,18 @@ impl DockerSource {
             ("type".to_string(), vec!["container".to_string()]),
             ("event".to_string(), vec!["start".to_string()]),
         ]);
+        let skip_kubernetes = self.skip_kubernetes;
         let events = self
             .docker
             .events(Some(EventsOptions {
                 filters: Some(filters),
                 ..Default::default()
             }))
-            .map(|event| {
+            .map(move |event| {
                 let event = event.context("watching Docker events")?;
                 Ok(event
                     .actor
+                    .filter(|actor| wanted(skip_kubernetes, actor.attributes.as_ref()))
                     .and_then(started_target)
                     .map(|target| (target, event.time.unwrap_or_else(unix_now))))
             })
@@ -171,6 +194,21 @@ impl DockerSource {
         }
         Ok(live.boxed())
     }
+}
+
+/// Whether a container with these labels (or event attributes, which carry the labels) is
+/// worth tailing. Kubernetes' pause containers never are: they hold a pod's namespaces and
+/// print nothing.
+fn wanted(skip_kubernetes: bool, labels: Option<&HashMap<String, String>>) -> bool {
+    let Some(labels) = labels else {
+        return true;
+    };
+    let pause = labels.get("io.kubernetes.container.name").is_some_and(|n| n == "POD")
+        || labels
+            .get("io.kubernetes.docker.type")
+            .is_some_and(|t| t == "podsandbox");
+    let kubelet = labels.contains_key("io.kubernetes.pod.name");
+    !(pause || (skip_kubernetes && kubelet))
 }
 
 fn unix_now() -> i64 {
@@ -301,8 +339,8 @@ fn parse_output(output: LogOutput, origin: &str, labels: &BTreeMap<String, Strin
         .collect()
 }
 
-/// Docker prefixes each line with an RFC 3339 timestamp when `timestamps=true`.
-fn split_timestamp(line: &str) -> (SystemTime, &str) {
+/// Docker and Kubernetes prefix each line with an RFC 3339 timestamp when asked to.
+pub(crate) fn split_timestamp(line: &str) -> (SystemTime, &str) {
     if let Some((ts, rest)) = line.split_once(' ')
         && let Ok(time) = humantime::parse_rfc3339(ts)
     {
@@ -339,6 +377,32 @@ mod tests {
         assert_eq!(target.state, "running");
         assert_eq!(target.labels["image"], "nginx:1.27");
         assert_eq!(target.labels["compose_project"], "shop");
+    }
+
+    #[test]
+    fn skips_kubernetes_containers() {
+        let labels = |pairs: &[(&str, &str)]| {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect::<HashMap<_, _>>()
+        };
+        let plain = labels(&[("com.docker.compose.service", "api")]);
+        let app = labels(&[
+            ("io.kubernetes.pod.name", "api-7d9f"),
+            ("io.kubernetes.container.name", "web"),
+        ]);
+        let pause = labels(&[
+            ("io.kubernetes.pod.name", "api-7d9f"),
+            ("io.kubernetes.container.name", "POD"),
+        ]);
+        assert!(wanted(false, Some(&plain)) && wanted(true, Some(&plain)));
+        assert!(wanted(false, None));
+        // Pod containers are kept unless a Kubernetes source reads them.
+        assert!(wanted(false, Some(&app)));
+        assert!(!wanted(true, Some(&app)));
+        // Pause containers are never worth tailing.
+        assert!(!wanted(false, Some(&pause)));
     }
 
     #[test]

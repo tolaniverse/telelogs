@@ -8,7 +8,7 @@ use std::path::Path;
 use telelog_proto::auth::connect;
 use telelog_proto::v1::ListTargetsRequest;
 use telelog_server::{Config, TlsFiles};
-use telelog_sources::DockerSource;
+use telelog_sources::{DockerSource, Sources};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
@@ -25,9 +25,12 @@ async fn start(config: Config) -> Running {
     let (stop, stopped) = oneshot::channel::<()>();
     // An address nothing listens on: these tests only care whether requests pass auth, and
     // must behave the same on machines without Docker.
-    let docker = DockerSource::connect_http("tcp://127.0.0.1:9").unwrap();
+    let sources = Sources {
+        docker: Some(DockerSource::connect_http("tcp://127.0.0.1:9").unwrap()),
+        kubernetes: None,
+    };
     tokio::spawn(async move {
-        telelog_server::serve(listener, config, docker, async {
+        telelog_server::serve(listener, config, sources, async {
             let _ = stopped.await;
         })
         .await
