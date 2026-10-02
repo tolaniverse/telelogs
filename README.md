@@ -14,7 +14,23 @@ Open-source log aggregator: a native desktop app (built with [GPUI](https://gpui
 | `telelog-server` | Self-hostable server that collects logs and streams them to the app |
 | `telelog-app` | GPUI desktop client (`telelogs` binary) |
 
-## Running locally
+## Install
+
+Download the server and the macOS app from the [latest release](https://github.com/tolaniverse/telelogs/releases/latest),
+or run the server as a container next to Docker:
+
+```sh
+docker run -d --name telelog-server \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -p 127.0.0.1:7070:7070 \
+  ghcr.io/tolaniverse/telelog-server --allow-unauthenticated
+```
+
+The port is published on `127.0.0.1` only; to reach the server from other machines, drop
+`--allow-unauthenticated` and pass a token (see below). The app isn't notarized yet, so the first time macOS
+refuses to open it: click **Open Anyway** in System Settings → Privacy & Security.
+
+## Running from source
 
 Requires Rust and a running Docker daemon.
 
