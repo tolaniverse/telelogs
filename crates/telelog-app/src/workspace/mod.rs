@@ -59,13 +59,15 @@ pub enum LevelFilter {
 }
 
 impl LevelFilter {
-    fn min_level(self) -> Option<Level> {
+    /// Each button picks one level, not "this level and worse": Warn shows warnings only.
+    /// Debug also covers trace, the level below it.
+    fn includes(self, level: Level) -> bool {
         match self {
-            LevelFilter::All => None,
-            LevelFilter::Error => Some(Level::Error),
-            LevelFilter::Warn => Some(Level::Warn),
-            LevelFilter::Info => Some(Level::Info),
-            LevelFilter::Debug => Some(Level::Debug),
+            LevelFilter::All => true,
+            LevelFilter::Error => level == Level::Error,
+            LevelFilter::Warn => level == Level::Warn,
+            LevelFilter::Info => level == Level::Info,
+            LevelFilter::Debug => matches!(level, Level::Debug | Level::Trace),
         }
     }
 }
@@ -250,7 +252,9 @@ impl Workspace {
     }
 
     fn passes(&self, entry: &Entry) -> bool {
-        self.is_enabled(&entry.record.origin) && self.filter.matches(&entry.record)
+        self.is_enabled(&entry.record.origin)
+            && self.level.includes(entry.record.level)
+            && self.filter.matches(&entry.record)
     }
 
     fn apply(&mut self, batch: Vec<ClientEvent>, cx: &mut Context<Self>) {
@@ -399,7 +403,6 @@ impl Workspace {
     fn refilter(&mut self, cx: &mut Context<Self>) {
         let text = self.filter_input.read(cx).value();
         self.filter = Filter::new(&text);
-        self.filter.min_level = self.level.min_level();
         (self.filter.from, self.filter.to) = self.range.bounds(SystemTime::now());
         self.rebuild_visible();
         self.scroll_to_end_if_following();
@@ -781,4 +784,29 @@ fn modal(t: crate::theme::Tokens, panel: impl IntoElement, top: Option<f32>, cx:
             cx.listener(|this, _, window, cx| this.close_overlays(window, cx)),
         )
         .child(panel)
+}
+
+#[cfg(test)]
+mod tests {
+    use telelog_core::Level;
+
+    use super::LevelFilter;
+
+    #[test]
+    fn level_buttons_pick_one_level() {
+        let all = [
+            Level::Unknown,
+            Level::Trace,
+            Level::Debug,
+            Level::Info,
+            Level::Warn,
+            Level::Error,
+        ];
+        let shown = |filter: LevelFilter| all.into_iter().filter(|&l| filter.includes(l)).collect::<Vec<_>>();
+        assert_eq!(shown(LevelFilter::All), all);
+        assert_eq!(shown(LevelFilter::Error), [Level::Error]);
+        assert_eq!(shown(LevelFilter::Warn), [Level::Warn]);
+        assert_eq!(shown(LevelFilter::Info), [Level::Info]);
+        assert_eq!(shown(LevelFilter::Debug), [Level::Trace, Level::Debug]);
+    }
 }
