@@ -95,8 +95,15 @@ impl Level {
 
     /// Best-effort level detection from an unstructured line.
     pub fn sniff(line: &str) -> Level {
-        let head = &line[..line.len().min(64)];
-        let upper = head.to_ascii_uppercase();
+        if let Some(level) = klog_level(line) {
+            return level;
+        }
+        // The first 64 bytes, cut on a character boundary so multi-byte text can't split.
+        let mut end = line.len().min(64);
+        while !line.is_char_boundary(end) {
+            end -= 1;
+        }
+        let upper = line[..end].to_ascii_uppercase();
         if upper.contains("ERROR") || upper.contains("FATAL") || upper.contains("PANIC") {
             Level::Error
         } else if upper.contains("WARN") {
@@ -111,6 +118,50 @@ impl Level {
             Level::Unknown
         }
     }
+
+    /// The level of `line` when `previous` is the level of the line before it from the same
+    /// container. Stack traces arrive one frame per line with no level of their own, so lines
+    /// that continue a trace keep the level of the line that started it.
+    pub fn sniff_after(line: &str, previous: Level) -> Level {
+        if previous != Level::Unknown && is_continuation(line) {
+            previous
+        } else {
+            Level::sniff(line)
+        }
+    }
+}
+
+/// Kubernetes components (klog/glog) start each line with the level's letter and the date:
+/// `I1002 23:47:01.123456 1 controller.go:42] ...`.
+fn klog_level(line: &str) -> Option<Level> {
+    let b = line.as_bytes();
+    if b.len() < 6 || !b[1..5].iter().all(u8::is_ascii_digit) || b[5] != b' ' {
+        return None;
+    }
+    match b[0] {
+        b'I' => Some(Level::Info),
+        b'W' => Some(Level::Warn),
+        b'E' | b'F' => Some(Level::Error),
+        _ => None,
+    }
+}
+
+/// A line that continues the previous one: an indented stack frame, a chained cause, or the
+/// exception line that heads a trace (`java.lang.IllegalStateException: ...`, `ValueError: ...`).
+fn is_continuation(line: &str) -> bool {
+    if line.starts_with([' ', '\t']) {
+        return true;
+    }
+    if ["Caused by:", "Suppressed:", "Traceback (most recent call last):"]
+        .iter()
+        .any(|p| line.starts_with(p))
+    {
+        return true;
+    }
+    let head = line.split(':').next().unwrap_or_default();
+    !head.is_empty()
+        && head.chars().all(|c| c.is_ascii_alphanumeric() || "._$".contains(c))
+        && ["Exception", "Error", "Throwable"].iter().any(|s| head.ends_with(s))
 }
 
 /// One log line plus its metadata.
@@ -209,6 +260,69 @@ mod tests {
         assert_eq!(Level::sniff("2026-10-01 ERROR db down"), Level::Error);
         assert_eq!(Level::sniff("[warn] slow query"), Level::Warn);
         assert_eq!(Level::sniff("hello"), Level::Unknown);
+    }
+
+    #[test]
+    fn sniffs_klog_levels() {
+        assert_eq!(
+            Level::sniff("I1002 23:47:01.123456 1 leader.go:42] renewed lease"),
+            Level::Info
+        );
+        assert_eq!(
+            Level::sniff("W1002 23:47:01.123456 1 reflector.go:561] watch closed"),
+            Level::Warn
+        );
+        assert_eq!(
+            Level::sniff("E1002 23:47:01.123456 1 controller.go:9] sync failed"),
+            Level::Error
+        );
+        // A klog info line that mentions an error is still info.
+        assert_eq!(
+            Level::sniff("I1002 23:47:01.123456 1 x.go:1] retrying after error"),
+            Level::Info
+        );
+        assert_eq!(Level::sniff("Ingress controller started"), Level::Unknown);
+    }
+
+    #[test]
+    fn sniff_survives_multibyte_text_at_the_cut() {
+        // 63 ASCII bytes then a 3-byte character straddling byte 64.
+        let line = format!("{}€ ERROR", "a".repeat(63));
+        assert_eq!(Level::sniff(&line), Level::Unknown);
+        assert_eq!(Level::sniff("✓ ok"), Level::Unknown);
+    }
+
+    #[test]
+    fn stack_traces_keep_the_level_of_their_first_line() {
+        let lines = [
+            "2026-10-02T23:47:01.123Z ERROR 1 --- [nio-8080-exec-1] o.a.c.c.C.[dispatcherServlet] : Servlet failed",
+            "org.springframework.web.client.HttpServerErrorException$InternalServerError: 500 on POST",
+            "\tat org.springframework.web.client.DefaultResponseErrorHandler.handleError(DefaultResponseErrorHandler.java:89)",
+            "Caused by: java.net.SocketTimeoutException: Read timed out",
+            "\t... 16 more",
+            "2026-10-02T23:47:02.001Z  INFO 1 --- [main] c.d.payment.App : recovered",
+        ];
+        let mut level = Level::Unknown;
+        let levels: Vec<Level> = lines
+            .iter()
+            .map(|line| {
+                level = Level::sniff_after(line, level);
+                level
+            })
+            .collect();
+        assert_eq!(
+            levels,
+            [
+                Level::Error,
+                Level::Error,
+                Level::Error,
+                Level::Error,
+                Level::Error,
+                Level::Info
+            ]
+        );
+        // With nothing before it, an indented line has no level to inherit.
+        assert_eq!(Level::sniff_after("\tat x.y(Z.java:1)", Level::Unknown), Level::Unknown);
     }
 
     #[test]

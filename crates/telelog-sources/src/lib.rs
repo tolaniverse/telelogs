@@ -5,10 +5,25 @@ pub mod kubernetes;
 
 use anyhow::{Result, bail};
 use futures::stream::{self, BoxStream, StreamExt};
-use telelog_core::{LogRecord, SourceKind, Target};
+use telelog_core::{Level, LogRecord, SourceKind, Target};
 
 pub use docker::{DockerSource, LiveStart};
 pub use kubernetes::KubeSource;
+
+/// Re-levels one container's lines in order, so stack-trace lines take the level of the line
+/// they continue (see [`Level::sniff_after`]).
+pub(crate) fn chain_levels(lines: BoxStream<'static, Result<LogRecord>>) -> BoxStream<'static, Result<LogRecord>> {
+    lines
+        .scan(Level::Unknown, |previous, line| {
+            let line = line.map(|mut record| {
+                record.level = Level::sniff_after(&record.body, *previous);
+                *previous = record.level;
+                record
+            });
+            std::future::ready(Some(line))
+        })
+        .boxed()
+}
 
 /// Every source a server reads from, behind one interface.
 #[derive(Clone, Default)]

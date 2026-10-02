@@ -127,7 +127,7 @@ impl KubeSource {
         params.timestamps = true;
         let api: Api<Pod> = Api::namespaced(self.client.clone(), namespace);
         let (pod, origin, labels) = (pod.to_string(), target.name.clone(), target.labels.clone());
-        stream::once(async move {
+        let lines = stream::once(async move {
             let lines = api
                 .log_stream(&pod, &params)
                 .await
@@ -140,7 +140,8 @@ impl KubeSource {
         })
         .try_flatten()
         .try_filter(|r| std::future::ready(!r.body.trim().is_empty()))
-        .boxed()
+        .boxed();
+        crate::chain_levels(lines)
     }
 
     /// Streams a target, with its new `state`, whenever a container's state changes or its pod

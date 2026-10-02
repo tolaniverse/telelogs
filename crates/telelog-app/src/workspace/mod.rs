@@ -787,8 +787,9 @@ fn modal(t: crate::theme::Tokens, panel: impl IntoElement, top: Option<f32>, cx:
 }
 
 /// A short name for lists and log rows. Kubernetes targets are `namespace/pod/container`, too
-/// long to tell apart when cut off, so they show as `app/container` (or `pod/container`); the
-/// full name stays in the detail panel and on the Sources page.
+/// long to tell apart when cut off. They show as the app plus the pod's own suffix, so replicas
+/// stay distinct (`auth-svc-t2xv7`), with `/container` when the name doesn't already say it
+/// (`kong-gateway-7d79c/proxy`). The full name stays in the detail panel and on Sources.
 pub(super) fn display_name(
     source: SourceKind,
     name: &str,
@@ -801,8 +802,15 @@ pub(super) fn display_name(
     let (Some(pod), Some(container)) = (parts.next(), parts.next()) else {
         return name.to_string();
     };
-    let owner = labels.get("app").map_or(pod, String::as_str);
-    format!("{owner}/{container}")
+    let owner = match (labels.get("app"), pod.rsplit_once('-')) {
+        (Some(app), Some((_, suffix))) if pod != app => format!("{app}-{suffix}"),
+        _ => pod.to_string(),
+    };
+    if owner.contains(container) {
+        owner
+    } else {
+        format!("{owner}/{container}")
+    }
 }
 
 #[cfg(test)]
@@ -835,17 +843,28 @@ mod tests {
         use telelog_core::SourceKind;
 
         use super::display_name;
-        let app = BTreeMap::from([("app".to_string(), "api".to_string())]);
-        let none = BTreeMap::new();
+        let app = |name: &str| BTreeMap::from([("app".to_string(), name.to_string())]);
+        let k8s = |name: &str, labels: &BTreeMap<String, String>| display_name(SourceKind::Kubernetes, name, labels);
+        // Replicas of one deployment stay distinct, and a container named like its app is implied.
         assert_eq!(
-            display_name(SourceKind::Kubernetes, "shop/api-7d9f/web", &app),
-            "api/web"
+            k8s("default/auth-svc-54bf699c7d-t2xv7/auth", &app("auth-svc")),
+            "auth-svc-t2xv7"
         );
         assert_eq!(
-            display_name(SourceKind::Kubernetes, "shop/flaky/worker", &none),
-            "flaky/worker"
+            k8s("default/auth-svc-54bf699c7d-tp7ct/auth", &app("auth-svc")),
+            "auth-svc-tp7ct"
         );
-        assert_eq!(display_name(SourceKind::Docker, "shop-api-1", &app), "shop-api-1");
-        assert_eq!(display_name(SourceKind::Kubernetes, "odd", &none), "odd");
+        assert_eq!(
+            k8s("kong/kong-gateway-57d64f6696-7d79c/proxy", &app("kong-gateway")),
+            "kong-gateway-7d79c/proxy"
+        );
+        assert_eq!(k8s("kafka/djplatform-kafka-combined-0/kafka", &app("kafka")), "kafka-0");
+        assert_eq!(k8s("demo/flaky/worker", &app("flaky")), "flaky/worker");
+        assert_eq!(k8s("demo/flaky/worker", &BTreeMap::new()), "flaky/worker");
+        assert_eq!(k8s("odd", &BTreeMap::new()), "odd");
+        assert_eq!(
+            display_name(SourceKind::Docker, "shop-api-1", &app("api")),
+            "shop-api-1"
+        );
     }
 }

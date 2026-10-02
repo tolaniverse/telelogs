@@ -102,7 +102,8 @@ impl DockerSource {
         let origin = target.name.clone();
         let labels = target.labels.clone();
 
-        self.docker
+        let lines = self
+            .docker
             .logs(&target.id, Some(options))
             .flat_map(move |chunk| {
                 let records: Vec<Result<LogRecord>> = match chunk {
@@ -111,7 +112,8 @@ impl DockerSource {
                 };
                 stream::iter(records)
             })
-            .boxed()
+            .boxed();
+        crate::chain_levels(lines)
     }
 
     /// Merges the tails of several targets into one stream.
