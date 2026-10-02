@@ -1,0 +1,161 @@
+name: Release
+
+# Pushing a tag like v0.1.0 builds everything and publishes the GitHub release and the image.
+# Running it by hand builds everything without publishing, to check a release before tagging.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  IMAGE: ghcr.io/${{ github.repository_owner }}/telelog-server
+
+jobs:
+  server:
+    name: Server (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ubuntu 22.04 (glibc 2.35) so the binaries run on older distros and on Debian 12.
+          - { name: linux-amd64, os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+          - { name: linux-arm64, os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
+          - { name: darwin-arm64, os: macos-14, target: aarch64-apple-darwin }
+          - { name: darwin-amd64, os: macos-14, target: x86_64-apple-darwin }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+      - run: cargo build --release --locked -p telelog-server --target ${{ matrix.target }}
+      - name: Package
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          [[ "$GITHUB_REF_TYPE" == tag ]] || version="0.0.0-dev"
+          dir="telelog-server-$version-${{ matrix.name }}"
+          mkdir -p "$dir" dist
+          cp "target/${{ matrix.target }}/release/telelog-server" "$dir/"
+          cp LICENSE-AGPL README.md "$dir/"
+          tar -czf "dist/$dir.tar.gz" "$dir"
+          # The bare binary, for the container image.
+          cp "target/${{ matrix.target }}/release/telelog-server" "dist/telelog-server-${{ matrix.name }}"
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  app:
+    name: Desktop app (macOS universal)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-app
+      - run: |
+          cargo build --release --locked -p telelog-app --target aarch64-apple-darwin
+          cargo build --release --locked -p telelog-app --target x86_64-apple-darwin
+          lipo -create -output target/telelogs-universal \
+            target/aarch64-apple-darwin/release/telelogs target/x86_64-apple-darwin/release/telelogs
+          lipo -info target/telelogs-universal
+      - name: Bundle
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          [[ "$GITHUB_REF_TYPE" == tag ]] || version="0.0.0-dev"
+          scripts/bundle-macos.sh --binary target/telelogs-universal
+          mkdir -p dist
+          # ditto keeps the bundle's structure and attributes the way Finder expects.
+          ditto -c -k --keepParent target/release/Telelogs.app "dist/Telelogs-$version-macos-universal.zip"
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-macos
+          path: dist/*
+          if-no-files-found: error
+
+  image:
+    name: Container image
+    needs: server
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: server-linux-*
+          path: dist
+          merge-multiple: true
+      - name: Restore the executable bit (artifacts drop it)
+        run: |
+          chmod +x dist/telelog-server-linux-*
+          ls -la dist
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.ref_type == 'tag'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+            type=sha,enable=${{ github.ref_type != 'tag' }}
+          labels: |
+            org.opencontainers.image.title=telelog-server
+            org.opencontainers.image.description=Telelogs server: tails Docker containers and archives logs to your buckets
+            org.opencontainers.image.licenses=AGPL-3.0-only
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/release.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.ref_type == 'tag' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  release:
+    name: Publish release
+    if: github.ref_type == 'tag'
+    needs: [server, app, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd artifacts
+          # Only the archives are published; the bare binaries were for the image.
+          files=(*.tar.gz *.zip)
+          sha256sum "${files[@]}" > SHA256SUMS
+          cat SHA256SUMS
+          notes="../release-notes/$GITHUB_REF_NAME.md"
+          [[ -f "$notes" ]] || { echo "missing $notes" >&2; exit 1; }
+          gh release create "$GITHUB_REF_NAME" "${files[@]}" SHA256SUMS \
+            --title "Telelogs $GITHUB_REF_NAME" --notes-file "$notes" --verify-tag
