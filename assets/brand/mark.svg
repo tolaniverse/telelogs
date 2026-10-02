@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="currentColor">
+  <!-- Telelogs mark: a dot-matrix "T" whose stem fades like a stream of log lines. -->
+  <circle cx="4" cy="5" r="2.4"/><circle cx="10" cy="5" r="2.4"/><circle cx="16" cy="5" r="2.4"/><circle cx="22" cy="5" r="2.4"/><circle cx="28" cy="5" r="2.4"/>
+  <circle cx="16" cy="11" r="2.4"/>
+  <circle cx="16" cy="16.6" r="2.1" opacity="0.75"/>
+  <circle cx="16" cy="21.7" r="1.75" opacity="0.5"/>
+  <circle cx="16" cy="26.3" r="1.4" opacity="0.28"/>
+</svg>

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- App icon on the macOS grid: an 824px rounded square inset 100px, the mark at 520px. -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#000000"/>
+  <rect x="102" y="102" width="820" height="820" rx="183" fill="none" stroke="#2b2b2b" stroke-width="4"/>
+  <g transform="translate(252 252) scale(16.25)" fill="#ededed">
+    <circle cx="4" cy="5" r="2.4"/><circle cx="10" cy="5" r="2.4"/><circle cx="16" cy="5" r="2.4"/><circle cx="22" cy="5" r="2.4"/><circle cx="28" cy="5" r="2.4"/>
+    <circle cx="16" cy="11" r="2.4"/>
+    <circle cx="16" cy="16.6" r="2.1" opacity="0.75"/>
+    <circle cx="16" cy="21.7" r="1.75" opacity="0.5"/>
+    <circle cx="16" cy="26.3" r="1.4" opacity="0.28"/>
+  </g>
+</svg>

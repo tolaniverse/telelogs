@@ -25,6 +25,9 @@ cargo run -p telelog-app               # connects to http://127.0.0.1:7070
 
 Use `--listen` / `TELELOG_LISTEN` and `--server` / `TELELOG_SERVER` to change addresses.
 
+On macOS, `scripts/bundle-macos.sh` builds `target/release/Telelogs.app` with the app icon. The logo's
+sources are in `assets/brand/`; after changing `icon.svg`, `scripts/macos-icon.sh` regenerates the `.icns`.
+
 ## Securing the server
 
 On `127.0.0.1` the server runs open, for local use. To reach it from other machines, give it a token
