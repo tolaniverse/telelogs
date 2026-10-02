@@ -93,6 +93,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      # Don't attach a build record artifact; it isn't a release asset.
+      DOCKER_BUILD_RECORD_UPLOAD: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -144,6 +147,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
+          pattern: server-*
+          path: artifacts
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: app-*
           path: artifacts
           merge-multiple: true
       - name: Create the release
