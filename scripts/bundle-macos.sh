@@ -45,4 +45,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+# Ad-hoc sign the whole bundle. Without a bundle signature, a downloaded copy is reported as
+# damaged; with one, macOS offers Open Anyway until the app is signed with a Developer ID.
+codesign --force --sign - --identifier dev.telelogs.app "$app"
 echo "built $app"
