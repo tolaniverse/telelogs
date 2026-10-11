@@ -9,13 +9,14 @@ use anyhow::{Result, bail};
 use telelog_proto::auth::BearerToken;
 use telelog_proto::cloud::v1::collector_frame::Frame;
 use telelog_proto::cloud::v1::collector_service_client::CollectorServiceClient;
-use telelog_proto::cloud::v1::{Hello, Ping, Pong, gateway_frame};
+use telelog_proto::cloud::v1::{CollectorFrame, Hello, Ping, Pong, gateway_frame};
 use telelog_sources::Sources;
 use tokio::sync::mpsc;
 use tokio::task::{AbortHandle, JoinSet};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Code, Status};
 
+use crate::storage::{Spool, Storage};
 use crate::{Enrollment, frame};
 
 pub struct Collector {
@@ -57,12 +58,14 @@ const OUTBOX: usize = 256;
 pub async fn run(collector: Collector, shutdown: impl Future<Output = ()>) -> Result<()> {
     let boot_id = random_hex(16)?;
     let timing = collector.timing;
+    // Outlives each connection, so lines read while the gateway is away go out on the next one.
+    let storage = Storage::new(collector.sources.clone());
     let mut shutdown = std::pin::pin!(shutdown);
     let mut retry = timing.first_retry;
     loop {
         let started = Instant::now();
         let result = tokio::select! {
-            result = attach(&collector, &boot_id) => result,
+            result = attach(&collector, &boot_id, &storage) => result,
             _ = &mut shutdown => return Ok(()),
         };
         match result {
@@ -94,7 +97,7 @@ fn refused(e: &anyhow::Error) -> bool {
 }
 
 /// One connection, until it drops.
-async fn attach(collector: &Collector, boot_id: &str) -> Result<()> {
+async fn attach(collector: &Collector, boot_id: &str, storage: &Storage) -> Result<()> {
     let enrollment = &collector.enrollment;
     let channel = telelog_proto::auth::channel(&enrollment.gateway, collector.ca_pem.as_deref()).await?;
     let mut client = CollectorServiceClient::with_interceptor(channel, BearerToken::new(Some(&enrollment.key))?);
@@ -118,6 +121,10 @@ async fn attach(collector: &Collector, boot_id: &str) -> Result<()> {
     );
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let (mut unanswered, mut nonce) = (0, 0);
+    // Storage batches this connection has sent; a new connection starts over with what's
+    // still unacknowledged.
+    let (mut sent, mut storing) = (0, false);
+    let mut newest_batch = storage.spool.subscribe();
     loop {
         tokio::select! {
             message = inbound.message() => {
@@ -127,8 +134,10 @@ async fn attach(collector: &Collector, boot_id: &str) -> Result<()> {
                 match received.frame {
                     Some(gateway_frame::Frame::Config(config)) => {
                         tracing::info!(store = config.store, "configured by the gateway");
-                        if config.store {
-                            tracing::warn!("the gateway asked for storage, which this collector doesn't send yet");
+                        storage.configure(&config);
+                        storing = config.store;
+                        if storing {
+                            send_batches(&storage.spool, &out, &mut sent).await?;
                         }
                     }
                     Some(gateway_frame::Frame::Open(open)) => {
@@ -148,11 +157,15 @@ async fn attach(collector: &Collector, boot_id: &str) -> Result<()> {
                         out.send(frame(Frame::Pong(Pong { nonce }))).await?;
                     }
                     Some(gateway_frame::Frame::Pong(_)) => unanswered = 0,
-                    Some(gateway_frame::Frame::Ack(_)) | None => {}
+                    Some(gateway_frame::Frame::Ack(ack)) => storage.spool.ack(ack.seq),
+                    None => {}
                 }
             }
             Some(Ok(call)) = tasks.join_next() => {
                 calls.remove(&call);
+            }
+            Ok(()) = newest_batch.changed(), if storing => {
+                send_batches(&storage.spool, &out, &mut sent).await?;
             }
             _ = ping.tick() => {
                 if unanswered >= collector.timing.missed_pings {
@@ -164,6 +177,14 @@ async fn attach(collector: &Collector, boot_id: &str) -> Result<()> {
             }
         }
     }
+}
+
+async fn send_batches(spool: &Spool, out: &mpsc::Sender<CollectorFrame>, sent: &mut u64) -> Result<()> {
+    for batch in spool.after(*sent) {
+        *sent = batch.seq;
+        out.send(frame(Frame::Batch(batch))).await?;
+    }
+    Ok(())
 }
 
 /// Between half and all of `wait`, so collectors that lost the gateway together don't all come

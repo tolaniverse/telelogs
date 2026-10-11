@@ -6,7 +6,9 @@ use futures::stream::{self, BoxStream, StreamExt};
 use prost::Message;
 use telelog_proto::auth::BearerToken;
 use telelog_proto::cloud::v1::relay_service_client::RelayServiceClient;
-use telelog_proto::cloud::v1::{CallRequest, Collector, ListCollectorsRequest, LogRecords, Method};
+use telelog_proto::cloud::v1::{
+    CallRequest, Collector, CollectorQuery, CollectorStorageRequest, ListCollectorsRequest, LogRecords, Method,
+};
 use telelog_proto::v1;
 use tonic::Status;
 use tonic::service::interceptor::InterceptedService;
@@ -108,18 +110,30 @@ impl Remote {
         }
     }
 
+    /// Stored lines. Through the relay the cloud answers from its storage, not the collector.
     pub async fn query(&mut self, request: v1::QueryRequest) -> Result<Replies<v1::LogRecord>, Status> {
         match self {
             Remote::Direct(client) => Ok(client.query(request).await?.into_inner().boxed()),
-            Remote::Relay { .. } => Err(Status::failed_precondition("Telelog Cloud doesn't store logs yet")),
+            Remote::Relay { client, collector } => Ok(client
+                .query(CollectorQuery {
+                    collector_id: collector.clone(),
+                    query: Some(request),
+                })
+                .await?
+                .into_inner()
+                .boxed()),
         }
     }
 
-    /// Through the relay there is no bucket yet, which reads as archiving off.
     pub async fn get_storage(&mut self) -> Result<v1::StorageInfo, Status> {
         match self {
             Remote::Direct(client) => Ok(client.get_storage(v1::GetStorageRequest {}).await?.into_inner()),
-            Remote::Relay { .. } => Ok(v1::StorageInfo::default()),
+            Remote::Relay { client, collector } => Ok(client
+                .get_storage(CollectorStorageRequest {
+                    collector_id: collector.clone(),
+                })
+                .await?
+                .into_inner()),
         }
     }
 }
@@ -177,6 +191,28 @@ mod tests {
                     online: true,
                     ..Default::default()
                 }],
+            }))
+        }
+
+        type QueryStream = BoxStream<'static, Result<v1::LogRecord, Status>>;
+
+        async fn query(&self, request: Request<CollectorQuery>) -> Result<Response<Self::QueryStream>, Status> {
+            assert_eq!(request.into_inner().collector_id, "col_1");
+            let line = v1::LogRecord {
+                body: "stored".into(),
+                ..Default::default()
+            };
+            Ok(Response::new(stream::iter([Ok(line)]).boxed()))
+        }
+
+        async fn get_storage(
+            &self,
+            _request: Request<CollectorStorageRequest>,
+        ) -> Result<Response<v1::StorageInfo>, Status> {
+            Ok(Response::new(v1::StorageInfo {
+                enabled: true,
+                retention_days: 7,
+                ..Default::default()
             }))
         }
 
@@ -256,10 +292,10 @@ mod tests {
         let status = remote.watch_targets().await.err().unwrap();
         assert_eq!(status.message(), "the collector is offline");
 
-        // No cloud storage yet: Query says so and storage reads as off.
-        let status = remote.query(v1::QueryRequest::default()).await.err().unwrap();
-        assert_eq!(status.code(), Code::FailedPrecondition);
-        assert!(!remote.get_storage().await.unwrap().enabled);
+        // Storage questions go to the cloud itself.
+        let stored: Vec<_> = remote.query(v1::QueryRequest::default()).await.unwrap().collect().await;
+        assert_eq!(stored[0].as_ref().unwrap().body, "stored");
+        assert_eq!(remote.get_storage().await.unwrap().retention_days, 7);
     }
 
     #[tokio::test]

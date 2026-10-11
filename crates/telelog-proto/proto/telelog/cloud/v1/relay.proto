@@ -4,6 +4,7 @@ package telelog.cloud.v1;
 
 import "google/protobuf/timestamp.proto";
 import "telelog/cloud/v1/collector.proto";
+import "telelog/v1/logs.proto";
 
 // What the app calls to reach collectors through Telelog Cloud, authenticated with the
 // signed-in user's session token.
@@ -13,6 +14,20 @@ service RelayService {
   // One LogService call, forwarded to a collector. The stream carries its replies and ends with
   // the collector's status, or UNAVAILABLE when the collector disconnects.
   rpc Call(CallRequest) returns (stream CallReply);
+  // Stored lines from a collector, oldest first, answered by the cloud from storage.
+  // FAILED_PRECONDITION when the workspace stores nothing.
+  rpc Query(CollectorQuery) returns (stream telelog.v1.LogRecord);
+  // What the cloud stores for a collector; `enabled` is false when the workspace stores nothing.
+  rpc GetStorage(CollectorStorageRequest) returns (telelog.v1.StorageInfo);
+}
+
+message CollectorQuery {
+  string collector_id = 1;
+  telelog.v1.QueryRequest query = 2;
+}
+
+message CollectorStorageRequest {
+  string collector_id = 1;
 }
 
 message ListCollectorsRequest {}

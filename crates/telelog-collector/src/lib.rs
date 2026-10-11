@@ -7,6 +7,7 @@
 mod calls;
 pub mod enrollment;
 mod session;
+mod storage;
 
 pub use enrollment::{Enrollment, enroll};
 pub use session::{Collector, Timing, run};

@@ -612,9 +612,9 @@ impl Workspace {
             Some(Ok(info)) if !info.enabled && self.open.cloud.is_some() => card(t).child(empty_state(
                 t,
                 Icon::Cylinder,
-                "Telelog Cloud doesn’t store logs yet",
+                "This workspace doesn’t store logs",
                 Some(
-                    "Lines from this collector stay in the app’s memory. Cloud storage comes with the storage add-on."
+                    "Lines from this collector stay in the app’s memory. Turn on storage for your workspace to keep them in Telelog Cloud."
                         .into(),
                 ),
             )),
@@ -633,7 +633,8 @@ impl Workspace {
                 .child(bucket_row(t, info)),
         };
 
-        let retention = info.as_ref().map(|info| {
+        // These are telelog-server flags; Telelog Cloud's retention comes from the workspace's plan.
+        let retention = info.as_ref().filter(|_| self.open.cloud.is_none()).map(|info| {
             let keep = match info.retention_days {
                 0 => "Forever".to_string(),
                 1 => "1 day".to_string(),
@@ -658,7 +659,9 @@ impl Workspace {
                 ))
         });
 
-        let subtitle = if info.is_some() {
+        let subtitle = if info.is_some() && self.open.cloud.is_some() {
+            "Live lines stay in memory, and Telelog Cloud stores every line for your workspace."
+        } else if info.is_some() {
             "Live lines stay in memory, and every line is also archived to your bucket."
         } else {
             "Live lines stay in memory. Point the server at a bucket to keep them for as long as you want."

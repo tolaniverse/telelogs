@@ -64,9 +64,9 @@ message Hello {
 message Config {
   // Send every line in Batches, for storage.
   bool store = 1;
-  // Per origin, the newest line already stored. After a restart the collector sends lines from
-  // these times on, so storage has no gap and no repeats. Origins not listed start from now.
-  map<string, google.protobuf.Timestamp> stored_until = 2;
+  // The newest line already stored from this collector. It sends lines after this time, so a
+  // restart leaves no gap; unset means start from now.
+  google.protobuf.Timestamp resume_from = 2;
   // The workspace key payloads must be sealed with; empty for a workspace the cloud can read.
   string key_id = 3;
 }
