@@ -10,6 +10,13 @@ pub mod v1 {
     tonic::include_proto!("telelog.v1");
 }
 
+/// Telelog Cloud: collectors connecting out to the gateway, and the app reaching them through it.
+pub mod cloud {
+    pub mod v1 {
+        tonic::include_proto!("telelog.cloud.v1");
+    }
+}
+
 pub use v1::log_service_client::LogServiceClient;
 pub use v1::log_service_server::{LogService, LogServiceServer};
 
@@ -162,5 +169,39 @@ mod tests {
         assert_eq!(back.stream, original.stream);
         assert_eq!(back.level, original.level);
         assert_eq!(back.labels, original.labels);
+    }
+
+    /// The relay carries app calls as bytes; both ends must agree on what they hold.
+    #[test]
+    fn relayed_calls_carry_log_service_messages() {
+        use prost::Message;
+
+        use cloud::v1::{LogRecords, Method, Open, Reply};
+
+        let request = v1::TailRequest {
+            target_ids: vec!["api".into()],
+            backlog: 500,
+        };
+        let open = Open {
+            call: 7,
+            method: Method::Tail.into(),
+            payload: request.encode_to_vec(),
+        };
+        let open = Open::decode(open.encode_to_vec().as_slice()).unwrap();
+        assert_eq!(open.method(), Method::Tail);
+        assert_eq!(v1::TailRequest::decode(open.payload.as_slice()).unwrap(), request);
+
+        let records = LogRecords {
+            records: vec![v1::LogRecord {
+                origin: "api".into(),
+                body: "ready".into(),
+                ..Default::default()
+            }],
+        };
+        let reply = Reply {
+            call: open.call,
+            payload: records.encode_to_vec(),
+        };
+        assert_eq!(LogRecords::decode(reply.payload.as_slice()).unwrap(), records);
     }
 }

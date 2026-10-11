@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package telelog.cloud.v1;
+
+import "google/protobuf/timestamp.proto";
+import "telelog/cloud/v1/collector.proto";
+
+// What the app calls to reach collectors through Telelog Cloud, authenticated with the
+// signed-in user's session token.
+service RelayService {
+  // The collectors in the user's workspace.
+  rpc ListCollectors(ListCollectorsRequest) returns (ListCollectorsResponse);
+  // One LogService call, forwarded to a collector. The stream carries its replies and ends with
+  // the collector's status, or UNAVAILABLE when the collector disconnects.
+  rpc Call(CallRequest) returns (stream CallReply);
+}
+
+message ListCollectorsRequest {}
+
+message ListCollectorsResponse {
+  repeated Collector collectors = 1;
+}
+
+message Collector {
+  string id = 1;
+  // Starts as the host name; can be renamed in the web console.
+  string name = 2;
+  string host = 3;
+  string version = 4;
+  bool online = 5;
+  google.protobuf.Timestamp last_seen = 6;
+  // Id of the workspace key its payloads are sealed with; empty when the cloud can read them.
+  string key_id = 7;
+}
+
+// Encoded like Open: `payload` is the method's telelog.v1 request, sealed in an end-to-end
+// workspace.
+message CallRequest {
+  string collector_id = 1;
+  Method method = 2;
+  bytes payload = 3;
+}
+
+// Encoded like Reply.
+message CallReply {
+  bytes payload = 1;
+}

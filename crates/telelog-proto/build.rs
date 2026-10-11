@@ -8,7 +8,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     unsafe { std::env::set_var("PROTOC", protoc) };
 
     tonic_prost_build::configure().compile_protos(
-        &[PathBuf::from("proto/telelog/v1/logs.proto")],
+        &[
+            PathBuf::from("proto/telelog/v1/logs.proto"),
+            PathBuf::from("proto/telelog/cloud/v1/collector.proto"),
+            PathBuf::from("proto/telelog/cloud/v1/relay.proto"),
+        ],
         &[PathBuf::from("proto"), well_known],
     )?;
     println!("cargo:rerun-if-changed=proto");

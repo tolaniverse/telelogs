@@ -1,0 +1,143 @@
+syntax = "proto3";
+
+package telelog.cloud.v1;
+
+import "google/protobuf/timestamp.proto";
+import "telelog/v1/logs.proto";
+
+// Telelog Cloud's side of a collector. The collector dials out and keeps one stream open; the
+// gateway sends app calls down it and the collector answers them from its sources.
+service CollectorService {
+  // Trades a one-time enrollment token for the collector's id and key.
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+  // The collector's one connection, authenticated with its key as a bearer token. The first
+  // frame the collector sends is a Hello; the gateway answers with a Config.
+  rpc Attach(stream CollectorFrame) returns (stream GatewayFrame);
+}
+
+message EnrollRequest {
+  string token = 1;
+  // Shown in the app and the web console.
+  string host = 2;
+  string version = 3;
+}
+
+message EnrollResponse {
+  string collector_id = 1;
+  string workspace_id = 2;
+  // Bearer credential for Attach. Sent only here; the collector keeps it on disk.
+  string key = 3;
+}
+
+message CollectorFrame {
+  oneof frame {
+    Hello hello = 1;
+    Reply reply = 2;
+    Close close = 3;
+    Batch batch = 4;
+    Ping ping = 5;
+    Pong pong = 6;
+  }
+}
+
+message GatewayFrame {
+  oneof frame {
+    Config config = 1;
+    Open open = 2;
+    Close close = 3;
+    Ack ack = 4;
+    Ping ping = 5;
+    Pong pong = 6;
+  }
+}
+
+message Hello {
+  string version = 1;
+  string host = 2;
+  // Random for each start of the collector. With Batch.seq it names a batch, so the gateway
+  // can drop one it already stored when the collector resends it after a reconnect.
+  string boot_id = 3;
+  // Id of the workspace key the collector seals with; empty when it has none.
+  string key_id = 4;
+}
+
+message Config {
+  // Send every line in Batches, for storage.
+  bool store = 1;
+  // Per origin, the newest line already stored. After a restart the collector sends lines from
+  // these times on, so storage has no gap and no repeats. Origins not listed start from now.
+  map<string, google.protobuf.Timestamp> stored_until = 2;
+  // The workspace key payloads must be sealed with; empty for a workspace the cloud can read.
+  string key_id = 3;
+}
+
+enum Method {
+  METHOD_UNSPECIFIED = 0;
+  METHOD_LIST_TARGETS = 1;
+  METHOD_WATCH_TARGETS = 2;
+  METHOD_TAIL = 3;
+}
+
+// An app's call. `payload` is the method's telelog.v1 request message, serialized, and in an
+// end-to-end workspace sealed as a Sealed message. The gateway never decodes it.
+message Open {
+  uint64 call = 1;
+  Method method = 2;
+  bytes payload = 3;
+}
+
+// One response to a call, encoded like Open.payload: a ListTargetsResponse, a Target for
+// WatchTargets, or LogRecords for Tail.
+message Reply {
+  uint64 call = 1;
+  bytes payload = 2;
+}
+
+// Ends a call. From the gateway, the app hung up or fell behind; from the collector, the call
+// finished or failed.
+message Close {
+  uint64 call = 1;
+  // A gRPC status code; 0 when the call finished normally.
+  int32 code = 2;
+  string message = 3;
+}
+
+// Several log lines in one message, for Tail replies and storage batches.
+message LogRecords {
+  repeated telelog.v1.LogRecord records = 1;
+}
+
+// Lines for storage, sent only while Config.store is on. Batches are acknowledged in order.
+message Batch {
+  uint64 seq = 1;
+  oneof body {
+    // In a workspace the cloud can read.
+    LogRecords records = 2;
+    // In an end-to-end workspace: LogRecords as a Sealed message, stored as it is.
+    bytes sealed = 3;
+  }
+}
+
+// Every batch up to and including `seq` is stored.
+message Ack {
+  uint64 seq = 1;
+}
+
+// Keep-alive, answered with a Pong carrying the same nonce. Sent by both sides because proxies
+// between them may not pass HTTP/2 pings through.
+message Ping {
+  uint64 nonce = 1;
+}
+
+message Pong {
+  uint64 nonce = 1;
+}
+
+// A payload in an end-to-end workspace: XChaCha20-Poly1305 under the workspace key, with the
+// call id (or, for a Batch, its seq) as associated data so it can't be replayed elsewhere.
+message Sealed {
+  string key_id = 1;
+  // 24 random bytes.
+  bytes nonce = 2;
+  bytes ciphertext = 3;
+}
