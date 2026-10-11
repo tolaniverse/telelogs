@@ -7808,14 +7808,14 @@ dependencies = [
 
 [[package]]
 name = "telelog-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "telelog-proto"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "prost",
@@ -7829,7 +7829,7 @@ dependencies = [
 
 [[package]]
 name = "telelog-server"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -7856,7 +7856,7 @@ dependencies = [
 
 [[package]]
 name = "telelog-sources"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "bollard",
@@ -7871,7 +7871,7 @@ dependencies = [
 
 [[package]]
 name = "telelogs"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
