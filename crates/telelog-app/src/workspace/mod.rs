@@ -101,6 +101,8 @@ pub struct Workspace {
     /// Origins (target names) included in the stream. Missing means included.
     enabled: HashMap<String, bool>,
     open_groups: HashSet<SourceKind>,
+    /// Kubernetes namespaces expanded in the sidebar; all start collapsed.
+    open_namespaces: HashSet<String>,
 
     entries: Vec<Entry>,
     next_id: u64,
@@ -128,7 +130,8 @@ pub struct Workspace {
     copied: bool,
 
     filter_input: Entity<InputState>,
-    rows_scroll: UniformListScrollHandle,
+    /// The rows view: one item per `visible` line, sized to its wrapped text.
+    rows: ListState,
     json_scroll: ScrollHandle,
 
     palette_open: bool,
@@ -208,6 +211,7 @@ impl Workspace {
             targets: Vec::new(),
             enabled: HashMap::new(),
             open_groups: HashSet::from([SourceKind::Docker, SourceKind::Kubernetes]),
+            open_namespaces: HashSet::new(),
             entries: Vec::new(),
             next_id: 1,
             live_starts: HashMap::new(),
@@ -228,7 +232,7 @@ impl Workspace {
             selected: None,
             copied: false,
             filter_input,
-            rows_scroll: UniformListScrollHandle::new(),
+            rows: ListState::new(0, ListAlignment::Top, px(240.)),
             json_scroll: ScrollHandle::new(),
             palette_open: false,
             palette_input,
@@ -258,6 +262,9 @@ impl Workspace {
     }
 
     fn apply(&mut self, batch: Vec<ClientEvent>, cx: &mut Context<Self>) {
+        // Taken before the batch moves or drops lines, so a rebuild can find the same line.
+        let anchor = self.scroll_anchor();
+        let shown = self.visible.len();
         let mut rebuild = false;
         for event in batch {
             match event {
@@ -350,7 +357,9 @@ impl Workspace {
             rebuild = true;
         }
         if rebuild {
-            self.rebuild_visible();
+            self.rebuild_visible_from(anchor);
+        } else {
+            self.rows.splice(shown..shown, self.visible.len() - shown);
         }
         self.scroll_to_end_if_following();
         cx.notify();
@@ -417,7 +426,23 @@ impl Workspace {
         }
     }
 
+    /// The line at the top of the rows view and how far into it the view is scrolled, so the
+    /// view can stay on it while the lines around it change. None while following.
+    fn scroll_anchor(&self) -> Option<(u64, SystemTime, Pixels)> {
+        if self.follow {
+            return None;
+        }
+        let top = self.rows.logical_scroll_top();
+        let entry = self.entry(*self.visible.get(top.item_ix)?);
+        Some((entry.id, entry.record.timestamp, top.offset_in_item))
+    }
+
     fn rebuild_visible(&mut self) {
+        let anchor = self.scroll_anchor();
+        self.rebuild_visible_from(anchor);
+    }
+
+    fn rebuild_visible_from(&mut self, anchor: Option<(u64, SystemTime, Pixels)>) {
         let archived: Vec<usize> = (0..self.archived.len())
             .filter(|&i| {
                 let e = &self.archived[i];
@@ -448,6 +473,24 @@ impl Workspace {
         visible.extend(a);
         visible.extend(l);
         self.visible = visible;
+
+        self.rows
+            .reset_with_uniform_height(self.visible.len(), px(stream::ROW_HEIGHT));
+        if let Some((id, timestamp, offset)) = anchor {
+            // The same line if it's still shown, otherwise the first one after it.
+            let (item_ix, offset_in_item) = match self.visible.iter().position(|&i| self.entry(i).id == id) {
+                Some(ix) => (ix, offset),
+                None => (
+                    self.visible
+                        .partition_point(|&i| self.entry(i).record.timestamp < timestamp),
+                    px(0.),
+                ),
+            };
+            self.rows.scroll_to(ListOffset {
+                item_ix,
+                offset_in_item,
+            });
+        }
     }
 
     /// Fetches the time range from the archive bucket, minus what the live buffer already holds
@@ -476,9 +519,7 @@ impl Workspace {
             return;
         }
         match self.view {
-            View::Rows => self
-                .rows_scroll
-                .scroll_to_item(self.visible.len() - 1, ScrollStrategy::Bottom),
+            View::Rows => self.rows.scroll_to_end(),
             View::Json => self.json_scroll.scroll_to_bottom(),
         }
     }
@@ -501,6 +542,22 @@ impl Workspace {
     fn toggle_target(&mut self, origin: &str, cx: &mut Context<Self>) {
         let on = self.is_enabled(origin);
         self.enabled.insert(origin.to_string(), !on);
+        self.rebuild_visible();
+        cx.notify();
+    }
+
+    /// Turns every target in a Kubernetes namespace on, or off when they're all on already.
+    fn toggle_namespace(&mut self, namespace: &str, cx: &mut Context<Self>) {
+        let names: Vec<String> = self
+            .targets
+            .iter()
+            .filter(|target| target.source == SourceKind::Kubernetes && namespace_of(&target.name) == namespace)
+            .map(|target| target.name.clone())
+            .collect();
+        let on = !names.iter().all(|name| self.is_enabled(name));
+        for name in names {
+            self.enabled.insert(name, on);
+        }
         self.rebuild_visible();
         cx.notify();
     }
@@ -554,6 +611,7 @@ impl Workspace {
         self.archive = ArchiveState::Off;
         self.archive_request += 1;
         self.visible.clear();
+        self.rows.reset(0);
         self.selected = None;
         cx.notify();
     }
@@ -786,6 +844,11 @@ fn modal(t: crate::theme::Tokens, panel: impl IntoElement, top: Option<f32>, cx:
         .child(panel)
 }
 
+/// The namespace of a Kubernetes target, the first part of `namespace/pod/container`.
+pub(super) fn namespace_of(name: &str) -> &str {
+    name.split_once('/').map_or(name, |(namespace, _)| namespace)
+}
+
 /// A short name for lists and log rows. Kubernetes targets are `namespace/pod/container`, too
 /// long to tell apart when cut off. They show as the app plus the pod's own suffix, so replicas
 /// stay distinct (`auth-svc-t2xv7`), with `/container` when the name doesn't already say it
@@ -835,6 +898,17 @@ mod tests {
         assert_eq!(shown(LevelFilter::Warn), [Level::Warn]);
         assert_eq!(shown(LevelFilter::Info), [Level::Info]);
         assert_eq!(shown(LevelFilter::Debug), [Level::Trace, Level::Debug]);
+    }
+
+    #[test]
+    fn finds_kubernetes_namespace() {
+        use super::namespace_of;
+        assert_eq!(
+            namespace_of("cert-manager/cert-manager-6d8b/controller"),
+            "cert-manager"
+        );
+        assert_eq!(namespace_of("default/auth-svc-54bf699c7d-t2xv7/auth"), "default");
+        assert_eq!(namespace_of("odd"), "odd");
     }
 
     #[test]

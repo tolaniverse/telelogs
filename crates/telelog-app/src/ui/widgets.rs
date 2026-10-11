@@ -198,6 +198,14 @@ pub fn checkbox(t: Tokens, on: bool) -> Div {
         .when(on, |el| el.bg(t.inv).child(icon(Icon::CheckboxCheck, 10., t.invfg)))
 }
 
+/// A checkbox for a group where only some members are on.
+pub fn checkbox_mixed(t: Tokens) -> Div {
+    checkbox(t, false)
+        .border_color(t.inv)
+        .bg(t.inv)
+        .child(div().w(px(7.)).h(px(1.5)).rounded_full().bg(t.invfg))
+}
+
 /// Page header used by Sources, Storage and Team.
 pub fn page_header(
     t: Tokens,

@@ -1,5 +1,3 @@
-use std::ops::Range;
-
 use chrono::{DateTime, Local, SecondsFormat, Utc};
 use gpui_kit::component::input::Input;
 use gpui_kit::prelude::FluentBuilder as _;
@@ -14,9 +12,11 @@ use crate::ui::canvas::{SphereMode, dot_grid, sphere};
 use crate::ui::widgets::{dot, icon_button, outline_button, primary_button, segment, segmented};
 use crate::ui::{Icon, icon};
 
-const ROW_HEIGHT: f32 = 24.;
+/// Height of a one-line row; longer messages wrap onto more lines.
+pub(super) const ROW_HEIGHT: f32 = 24.;
+const ROW_LINE_HEIGHT: f32 = 18.;
 /// Longest message rendered in a row; the detail panel shows the full line.
-const ROW_TEXT_LIMIT: usize = 400;
+const ROW_TEXT_LIMIT: usize = 2000;
 /// JSON view renders whole records, so it shows only the most recent ones.
 const JSON_RECORDS: usize = 60;
 
@@ -85,65 +85,76 @@ impl Workspace {
         cx.notify();
     }
 
-    fn render_rows(&mut self, range: Range<usize>, _: &mut Window, cx: &mut Context<Self>) -> Vec<Stateful<Div>> {
+    fn render_row(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = tokens(cx);
-        range
-            .filter_map(|ix| self.visible.get(ix).map(|&i| (ix, self.entry(i))))
-            .map(|(ix, entry)| {
-                let record = &entry.record;
-                let (bg, edge) = self.row_style(t, entry);
-                let id = entry.id;
+        let Some(&i) = self.visible.get(ix) else {
+            return div().into_any_element();
+        };
+        let entry = self.entry(i);
+        let record = &entry.record;
+        let (bg, edge) = self.row_style(t, entry);
+        let id = entry.id;
+        let body = match truncate(&record.body, ROW_TEXT_LIMIT) {
+            cut if cut.len() < record.body.len() => format!("{cut}…"),
+            whole => whole.to_string(),
+        };
+        div()
+            .id(("row", id))
+            // The list doesn't pass text style on to its items, and the message needs a definite
+            // width to wrap against.
+            .w_full()
+            .font_family(MONO)
+            .text_size(px(12.))
+            .min_h(px(ROW_HEIGHT))
+            .py(px((ROW_HEIGHT - ROW_LINE_HEIGHT) / 2.))
+            .pl(px(14.))
+            .pr(px(16.))
+            .flex()
+            .items_start()
+            .gap(px(14.))
+            .line_height(px(ROW_LINE_HEIGHT))
+            .bg(bg)
+            .border_l_2()
+            .border_color(edge)
+            .hover(|s| s.bg(t.bg3))
+            .on_click(cx.listener(move |this, _, _, cx| this.select(id, cx)))
+            .child(
                 div()
-                    .id(("row", ix))
-                    .h(px(ROW_HEIGHT))
-                    .pl(px(14.))
-                    .pr(px(16.))
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .text_color(t.fg3)
+                    .child(clock(record)),
+            )
+            .child(
+                div()
+                    .w(px(26.))
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .text_color(level_color(t, record.level))
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(level_short(record.level)),
+            )
+            .child(
+                div()
+                    .w(px(200.))
+                    .h(px(ROW_LINE_HEIGHT))
+                    .flex_none()
                     .flex()
                     .items_center()
-                    .gap(px(14.))
+                    .gap(px(7.))
+                    .overflow_hidden()
                     .whitespace_nowrap()
-                    .bg(bg)
-                    .border_l_2()
-                    .border_color(edge)
-                    .hover(|s| s.bg(t.bg3))
-                    .on_click(cx.listener(move |this, _, _, cx| this.select(id, cx)))
-                    .child(div().flex_none().text_color(t.fg3).child(clock(record)))
+                    .child(icon(kind_icon(record.source), 13., t.fg3))
                     .child(
                         div()
-                            .w(px(26.))
-                            .flex_none()
-                            .text_color(level_color(t, record.level))
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(level_short(record.level)),
-                    )
-                    .child(
-                        div()
-                            .w(px(200.))
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .gap(px(7.))
-                            .overflow_hidden()
-                            .child(icon(kind_icon(record.source), 13., t.fg3))
-                            .child(
-                                div()
-                                    .overflow_hidden()
-                                    .text_ellipsis()
-                                    .text_color(t.fg2)
-                                    .child(super::display_name(record.source, &record.origin, &record.labels)),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
                             .overflow_hidden()
                             .text_ellipsis()
-                            .text_color(t.fg)
-                            .child(truncate(&record.body, ROW_TEXT_LIMIT).to_string()),
-                    )
-            })
-            .collect()
+                            .text_color(t.fg2)
+                            .child(super::display_name(record.source, &record.origin, &record.labels)),
+                    ),
+            )
+            .child(div().flex_1().min_w_0().text_color(t.fg).child(body))
+            .into_any_element()
     }
 
     fn render_json_records(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -698,12 +709,9 @@ impl Workspace {
             }
         } else {
             match self.view {
-                View::Rows => uniform_list("rows", self.visible.len(), cx.processor(Self::render_rows))
-                    .track_scroll(&self.rows_scroll)
+                View::Rows => list(self.rows.clone(), cx.processor(Self::render_row))
                     .flex_1()
                     .py(px(6.))
-                    .font_family(MONO)
-                    .text_size(px(12.))
                     .into_any_element(),
                 View::Json => self.render_json_records(cx).into_any_element(),
             }
@@ -737,7 +745,7 @@ impl Workspace {
                                     this.set_follow(false, cx);
                                 } else if dy < px(0.) && !this.follow {
                                     let at_end = match this.view {
-                                        View::Rows => this.rows_scroll.is_scrolled_to_end().unwrap_or(false),
+                                        View::Rows => this.rows.is_scrolled_to_end().unwrap_or(false),
                                         View::Json => {
                                             let handle = &this.json_scroll;
                                             handle.offset().y <= -handle.max_offset().y + px(24.)

@@ -1,11 +1,13 @@
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use telelog_core::SourceKind;
+use std::collections::BTreeMap;
 
-use super::{Screen, Status, Workspace};
+use telelog_core::{SourceKind, Target};
+
+use super::{Screen, Status, Workspace, namespace_of};
 use crate::theme::{MONO, tokens};
 use crate::ui::canvas::brand_mark;
-use crate::ui::widgets::{checkbox, halo_dot, kbd, pill};
+use crate::ui::widgets::{checkbox, checkbox_mixed, halo_dot, kbd, pill};
 use crate::ui::{Icon, icon};
 
 pub fn kind_label(kind: SourceKind) -> &'static str {
@@ -141,41 +143,125 @@ impl Workspace {
                     );
 
                 let rows = open.then(|| {
+                    let rows: Vec<AnyElement> = if kind == SourceKind::Kubernetes {
+                        self.render_namespaces(targets, cx)
+                    } else {
+                        targets
+                            .into_iter()
+                            .map(|target| self.render_target(target, 30., cx).into_any_element())
+                            .collect()
+                    };
+                    div().flex().flex_col().pt(px(2.)).pb(px(6.)).children(rows)
+                });
+                div().flex().flex_col().child(header).children(rows).into_any_element()
+            })
+            .collect()
+    }
+
+    fn render_target(&self, target: &Target, indent: f32, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let t = tokens(cx);
+        let on = self.is_enabled(&target.name);
+        let name = target.name.clone();
+        div()
+            .id(SharedString::from(format!("target-{}", target.id)))
+            .h(px(27.))
+            .pl(px(indent))
+            .pr(px(10.))
+            .flex()
+            .items_center()
+            .gap(px(9.))
+            .rounded(px(6.))
+            .cursor_pointer()
+            .hover(|s| s.bg(t.bg3))
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_target(&name, cx)))
+            .child(checkbox(t, on))
+            .child(
+                div()
+                    .flex_1()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .font_family(MONO)
+                    .text_size(px(11.5))
+                    .text_color(if on { t.fg } else { t.fg3 })
+                    .child(super::display_name(target.source, &target.name, &target.labels)),
+            )
+    }
+
+    /// Kubernetes pods under one collapsible row per namespace, whose checkbox selects them all.
+    fn render_namespaces(&self, targets: Vec<&Target>, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let t = tokens(cx);
+        let mut namespaces: BTreeMap<&str, Vec<&Target>> = BTreeMap::new();
+        for target in targets {
+            namespaces.entry(namespace_of(&target.name)).or_default().push(target);
+        }
+        namespaces
+            .into_iter()
+            .map(|(namespace, targets)| {
+                let on = targets.iter().filter(|target| self.is_enabled(&target.name)).count();
+                let open = self.open_namespaces.contains(namespace);
+                let (toggle, select) = (namespace.to_string(), namespace.to_string());
+                let header = div()
+                    .id(SharedString::from(format!("namespace-{namespace}")))
+                    .h(px(27.))
+                    .pl(px(14.))
+                    .pr(px(10.))
+                    .flex()
+                    .items_center()
+                    .gap(px(7.))
+                    .rounded(px(6.))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.bg3))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !this.open_namespaces.remove(&toggle) {
+                            this.open_namespaces.insert(toggle.clone());
+                        }
+                        cx.notify();
+                    }))
+                    .child(
+                        icon(Icon::CaretRight, 10., t.fg3).with_transformation(Transformation::rotate(if open {
+                            percentage(0.25)
+                        } else {
+                            percentage(0.)
+                        })),
+                    )
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("namespace-all-{namespace}")))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.toggle_namespace(&select, cx);
+                            }))
+                            .child(match on {
+                                0 => checkbox(t, false),
+                                n if n == targets.len() => checkbox(t, true),
+                                _ => checkbox_mixed(t),
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .text_size(px(12.5))
+                            .text_color(if on > 0 { t.fg } else { t.fg3 })
+                            .child(namespace.to_string()),
+                    )
+                    .child(
+                        div()
+                            .font_family(MONO)
+                            .text_size(px(11.))
+                            .text_color(t.fg3)
+                            .child(format!("{on}/{}", targets.len())),
+                    );
+                let pods = open.then(|| {
                     div()
                         .flex()
                         .flex_col()
-                        .pt(px(2.))
-                        .pb(px(6.))
-                        .children(targets.into_iter().map(|target| {
-                            let on = self.is_enabled(&target.name);
-                            let name = target.name.clone();
-                            div()
-                                .id(SharedString::from(format!("target-{}", target.id)))
-                                .h(px(27.))
-                                .pl(px(30.))
-                                .pr(px(10.))
-                                .flex()
-                                .items_center()
-                                .gap(px(9.))
-                                .rounded(px(6.))
-                                .cursor_pointer()
-                                .hover(|s| s.bg(t.bg3))
-                                .on_click(cx.listener(move |this, _, _, cx| this.toggle_target(&name, cx)))
-                                .child(checkbox(t, on))
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .overflow_hidden()
-                                        .text_ellipsis()
-                                        .whitespace_nowrap()
-                                        .font_family(MONO)
-                                        .text_size(px(11.5))
-                                        .text_color(if on { t.fg } else { t.fg3 })
-                                        .child(super::display_name(target.source, &target.name, &target.labels)),
-                                )
-                        }))
+                        .children(targets.into_iter().map(|target| self.render_target(target, 40., cx)))
                 });
-                div().flex().flex_col().child(header).children(rows).into_any_element()
+                div().flex().flex_col().child(header).children(pods).into_any_element()
             })
             .collect()
     }
