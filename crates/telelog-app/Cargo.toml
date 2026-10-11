@@ -18,8 +18,10 @@ path = "src/main.rs"
 anyhow.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap.workspace = true
+dirs = "6"
 futures.workspace = true
 rust-embed = "8"
+serde.workspace = true
 serde_json = { version = "1", features = ["preserve_order"] }
 gpui-kit = "0.7"
 telelog-core.workspace = true

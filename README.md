@@ -84,6 +84,7 @@ docker run -d --rm --name telelog-demo alpine sh -c \
 ## Using the app
 
 - **Sources:** tick the containers and pods to show in the stream. Hiding one doesn't stop the server reading it.
+  Your choices are saved for each server, and a namespace's choice applies to its pods as they're replaced.
 - **Filter:** by text (message or source name), by level (Error, Warn, Info, Debug) and by time range. With a
   bucket, a time range also reads lines the in-memory buffer no longer holds.
 - **Rows:** long lines wrap. Scroll up to pause following, and scroll back to the end to resume. Click a row

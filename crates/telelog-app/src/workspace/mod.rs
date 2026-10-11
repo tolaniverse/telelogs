@@ -5,6 +5,7 @@ mod add_source;
 mod pages;
 mod palette;
 mod range;
+mod selections;
 mod sidebar;
 mod stream;
 
@@ -100,6 +101,8 @@ pub struct Workspace {
     targets: Vec<Target>,
     /// Origins (target names) included in the stream. Missing means included.
     enabled: HashMap<String, bool>,
+    /// Choices saved for this server, which decide for sources the first time they're seen.
+    selections: selections::Selections,
     open_groups: HashSet<SourceKind>,
     /// Kubernetes namespaces expanded in the sidebar; all start collapsed.
     open_namespaces: HashSet<String>,
@@ -203,6 +206,7 @@ impl Workspace {
         let focus = cx.focus_handle();
         focus.focus(window, cx);
 
+        let selections = selections::Selections::load(&server);
         Workspace {
             server,
             client,
@@ -210,6 +214,7 @@ impl Workspace {
             status: Status::Connecting,
             targets: Vec::new(),
             enabled: HashMap::new(),
+            selections,
             open_groups: HashSet::from([SourceKind::Docker, SourceKind::Kubernetes]),
             open_namespaces: HashSet::new(),
             entries: Vec::new(),
@@ -251,6 +256,13 @@ impl Workspace {
         self.server.trim_start_matches("http://").trim_start_matches("https://")
     }
 
+    /// Whether a source is on when it first appears: as saved, or else `fallback`.
+    fn first_choice(&self, source: SourceKind, name: &str, fallback: bool) -> bool {
+        self.selections
+            .choice(source == SourceKind::Kubernetes, name)
+            .unwrap_or(fallback)
+    }
+
     fn is_enabled(&self, origin: &str) -> bool {
         self.enabled.get(origin).copied().unwrap_or(true)
     }
@@ -281,9 +293,8 @@ impl Workspace {
                     rebuild = true;
                     self.client.fetch_storage();
                     for target in &targets {
-                        self.enabled
-                            .entry(target.name.clone())
-                            .or_insert(target.state == "running");
+                        let on = self.first_choice(target.source, &target.name, target.state == "running");
+                        self.enabled.entry(target.name.clone()).or_insert(on);
                     }
                     self.targets = targets;
                     self.status = Status::Connected;
@@ -382,7 +393,8 @@ impl Workspace {
             state: "running".into(),
             labels: record.labels.clone(),
         });
-        self.enabled.entry(record.origin.clone()).or_insert(true);
+        let on = self.first_choice(record.source, &record.origin, true);
+        self.enabled.entry(record.origin.clone()).or_insert(on);
     }
 
     /// Applies a lifecycle change from the server. Targets are matched by name, which is also how
@@ -402,7 +414,8 @@ impl Workspace {
             }
             return;
         }
-        self.enabled.entry(target.name.clone()).or_insert(true);
+        let on = self.first_choice(target.source, &target.name, true);
+        self.enabled.entry(target.name.clone()).or_insert(on);
         match position {
             Some(ix) => self.targets[ix] = target,
             None => self.targets.push(target),
@@ -540,8 +553,10 @@ impl Workspace {
     }
 
     fn toggle_target(&mut self, origin: &str, cx: &mut Context<Self>) {
-        let on = self.is_enabled(origin);
-        self.enabled.insert(origin.to_string(), !on);
+        let on = !self.is_enabled(origin);
+        self.enabled.insert(origin.to_string(), on);
+        self.selections.set_target(origin, on);
+        self.selections.save(&self.server);
         self.rebuild_visible();
         cx.notify();
     }
@@ -558,6 +573,8 @@ impl Workspace {
         for name in names {
             self.enabled.insert(name, on);
         }
+        self.selections.set_namespace(namespace, on);
+        self.selections.save(&self.server);
         self.rebuild_visible();
         cx.notify();
     }
