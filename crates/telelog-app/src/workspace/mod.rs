@@ -1,6 +1,7 @@
 //! The window's root view: owns all app state and lays out the title bar, sidebar and
 //! the active screen. Each screen renders from its own module.
 
+mod add_server;
 mod add_source;
 mod pages;
 mod palette;
@@ -19,7 +20,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use telelog_core::{Filter, Level, LogRecord, SourceKind, Target};
 
-use crate::client::{Client, ClientEvent};
+use crate::client::{self, Client, ClientEvent};
+use crate::servers::{self, Open, Servers};
 use crate::theme::{self, MONO, tokens};
 use crate::time_range::TimeRange;
 use crate::ui::Icon;
@@ -94,7 +96,10 @@ pub enum ArchiveState {
 const ARCHIVED_IDS: u64 = 1 << 62;
 
 pub struct Workspace {
-    server: String,
+    /// The server this window shows, and the servers it can switch to.
+    open: Open,
+    servers: Servers,
+    runtime: tokio::runtime::Handle,
     client: Client,
     screen: Screen,
     status: Status,
@@ -145,6 +150,12 @@ pub struct Workspace {
     add_kind: SourceKind,
     add_inputs: add_source::Inputs,
 
+    server_menu_open: bool,
+    add_server_open: bool,
+    server_inputs: add_server::Inputs,
+    server_check: add_server::Check,
+    _server_check: Option<Task<()>>,
+
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
     _pump: Task<()>,
@@ -153,12 +164,13 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(
-        server: String,
-        client: Client,
-        mut events: UnboundedReceiver<ClientEvent>,
+        open: Open,
+        mut servers: Servers,
+        runtime: tokio::runtime::Handle,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let (client, events) = client::spawn(&runtime, open.connection.clone());
         let filter_input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter by text or container…"));
         let palette_input = cx.new(|cx| InputState::new(window, cx).placeholder("Type a command or search sources…"));
         let subscriptions = vec![
@@ -175,18 +187,7 @@ impl Workspace {
             }),
         ];
 
-        // Drain events in batches so a burst of lines costs one re-render.
-        let pump = cx.spawn(async move |this, cx| {
-            while let Some(first) = events.next().await {
-                let mut batch = vec![first];
-                while let Ok(event) = events.try_recv() {
-                    batch.push(event);
-                }
-                if this.update(cx, |this, cx| this.apply(batch, cx)).is_err() {
-                    break;
-                }
-            }
-        });
+        let pump = Self::pump(events, cx);
 
         // Relative ranges ("last 15 minutes") move with the clock, so old lines age out.
         let range_tick = cx.spawn(async move |this, cx| {
@@ -206,9 +207,15 @@ impl Workspace {
         let focus = cx.focus_handle();
         focus.focus(window, cx);
 
-        let selections = selections::Selections::load(&server);
+        let selections = Self::load_selections(&open);
+        if let Some(saved) = &open.saved {
+            servers.last = Some(saved.id.clone());
+            servers.save();
+        }
         Workspace {
-            server,
+            open,
+            servers,
+            runtime,
             client,
             screen: Screen::Stream,
             status: Status::Connecting,
@@ -245,6 +252,11 @@ impl Workspace {
             add_open: false,
             add_kind: SourceKind::Docker,
             add_inputs: add_source::Inputs::new(window, cx),
+            server_menu_open: false,
+            add_server_open: false,
+            server_inputs: add_server::Inputs::new(window, cx),
+            server_check: add_server::Check::Idle,
+            _server_check: None,
             focus,
             _subscriptions: subscriptions,
             _pump: pump,
@@ -252,8 +264,69 @@ impl Workspace {
         }
     }
 
+    /// Drains a client's events in batches, so a burst of lines costs one re-render.
+    fn pump(mut events: UnboundedReceiver<ClientEvent>, cx: &mut Context<Self>) -> Task<()> {
+        cx.spawn(async move |this, cx| {
+            while let Some(first) = events.next().await {
+                let mut batch = vec![first];
+                while let Ok(event) = events.try_recv() {
+                    batch.push(event);
+                }
+                if this.update(cx, |this, cx| this.apply(batch, cx)).is_err() {
+                    break;
+                }
+            }
+        })
+    }
+
+    fn load_selections(open: &Open) -> selections::Selections {
+        let legacy = open.saved.as_ref().map(|server| server.url.as_str());
+        selections::Selections::load(open.key(), legacy)
+    }
+
     fn server_addr(&self) -> &str {
-        self.server.trim_start_matches("http://").trim_start_matches("https://")
+        servers::address(&self.open.connection.server)
+    }
+
+    /// Disconnects from the current server and shows `open` in its place. Filters, the time
+    /// range and the screen stay as they are; everything that came from the old server goes.
+    fn switch_server(&mut self, open: Open, cx: &mut Context<Self>) {
+        let (client, events) = client::spawn(&self.runtime, open.connection.clone());
+        // Replacing the client and the pump drops the old ones, which ends that connection.
+        self.client = client;
+        self._pump = Self::pump(events, cx);
+        self.selections = Self::load_selections(&open);
+        if let Some(saved) = &open.saved {
+            self.servers.last = Some(saved.id.clone());
+            self.servers.save();
+        }
+        self.open = open;
+
+        self.status = Status::Connecting;
+        self.targets.clear();
+        self.enabled.clear();
+        self.open_namespaces.clear();
+        self.storage = None;
+        self.server_menu_open = false;
+        self.clear_stream(cx);
+        if self.screen == Screen::Storage {
+            self.client.fetch_storage();
+        }
+    }
+
+    /// Forgets a saved server, its token and its selections. If it's the one open, it stays
+    /// open, unsaved.
+    fn remove_server(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.servers.remove(id);
+        self.servers.save();
+        if let Err(e) = servers::set_token(id, None) {
+            eprintln!("telelogs: removing the token of server {id}: {e}");
+        }
+        selections::Selections::forget(id);
+        if self.open.saved.as_ref().is_some_and(|server| server.id == id) {
+            self.open.saved = None;
+        }
+        cx.notify();
     }
 
     /// Whether a source is on when it first appears: as saved, or else `fallback`.
@@ -556,7 +629,7 @@ impl Workspace {
         let on = !self.is_enabled(origin);
         self.enabled.insert(origin.to_string(), on);
         self.selections.set_target(origin, on);
-        self.selections.save(&self.server);
+        self.selections.save(self.open.key());
         self.rebuild_visible();
         cx.notify();
     }
@@ -574,7 +647,7 @@ impl Workspace {
             self.enabled.insert(name, on);
         }
         self.selections.set_namespace(namespace, on);
-        self.selections.save(&self.server);
+        self.selections.save(self.open.key());
         self.rebuild_visible();
         cx.notify();
     }
@@ -674,6 +747,8 @@ impl Workspace {
     fn close_overlays(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.palette_open = false;
         self.add_open = false;
+        self.add_server_open = false;
+        self.server_menu_open = false;
         self.focus.focus(window, cx);
         cx.notify();
     }
@@ -681,6 +756,7 @@ impl Workspace {
     fn open_add_source(&mut self, cx: &mut Context<Self>) {
         self.add_open = true;
         self.palette_open = false;
+        self.server_menu_open = false;
         cx.notify();
     }
 
@@ -708,7 +784,10 @@ impl Workspace {
             // Close the innermost thing that is open: range picker, dialog, then selection.
             if self.range_open {
                 self.close_range(cx);
-            } else if self.add_open {
+            } else if self.server_menu_open {
+                self.server_menu_open = false;
+                cx.notify();
+            } else if self.add_open || self.add_server_open {
                 self.close_overlays(window, cx);
             } else if self.selected.is_some() {
                 self.selected = None;
@@ -796,6 +875,7 @@ impl Render for Workspace {
         let screen = self.render_screen(window, cx);
         let palette = self.palette_open.then(|| self.render_palette(cx));
         let add = self.add_open.then(|| self.render_add_source(cx));
+        let add_server = self.add_server_open.then(|| self.render_add_server(cx));
 
         div()
             .key_context("Workspace")
@@ -838,6 +918,7 @@ impl Render for Workspace {
             )
             .children(palette)
             .children(add)
+            .children(add_server)
     }
 }
 

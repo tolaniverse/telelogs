@@ -3,14 +3,16 @@
 //! GPUI runs its own executor, and tonic needs tokio, so the two meet over a channel.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
+use futures::channel::oneshot;
 use telelog_core::{LogRecord, Target};
 use telelog_proto::v1;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, watch};
 
 /// Lines of history to request per target when (re)connecting.
 pub const BACKLOG: u32 = 500;
@@ -39,10 +41,13 @@ pub enum ClientEvent {
 /// Most archived lines fetched for one time range.
 pub const ARCHIVE_LIMIT: u32 = 20_000;
 
-/// Handle for one-off requests and for cutting the reconnect delay short.
+/// Handle for one-off requests and for cutting the reconnect delay short. Dropping the last
+/// handle disconnects.
 #[derive(Clone)]
 pub struct Client {
     retry: Arc<Notify>,
+    /// Never sent on; the tail loop stops when it's dropped.
+    _alive: Arc<watch::Sender<()>>,
     connection: Connection,
     runtime: tokio::runtime::Handle,
     tx: UnboundedSender<ClientEvent>,
@@ -120,12 +125,12 @@ fn describe_request(e: &anyhow::Error) -> String {
 }
 
 async fn connect(connection: &Connection) -> anyhow::Result<telelog_proto::auth::Client> {
-    telelog_proto::auth::connect(
-        &connection.server,
-        connection.token.as_deref(),
-        connection.ca_pem.as_deref(),
-    )
-    .await
+    // Read on every connect, so a renewed certificate is picked up without a restart.
+    let ca_pem = match &connection.ca_cert {
+        Some(path) => Some(std::fs::read(path).map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?),
+        None => None,
+    };
+    telelog_proto::auth::connect(&connection.server, connection.token.as_deref(), ca_pem.as_deref()).await
 }
 
 /// Where and how to reach telelog-server.
@@ -134,15 +139,42 @@ pub struct Connection {
     pub server: String,
     pub token: Option<String>,
     /// PEM CA certificate to trust for an `https://` server with a self-signed certificate.
-    pub ca_pem: Option<Vec<u8>>,
+    pub ca_cert: Option<PathBuf>,
 }
 
-/// Tails every running target on the server, reconnecting until the receiver is dropped.
+/// Longest the Add server dialog waits for a test connection.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Connects once and counts the server's targets, to test a server before it's saved.
+pub fn probe(runtime: &tokio::runtime::Handle, connection: Connection) -> oneshot::Receiver<Result<usize, String>> {
+    let (tx, rx) = oneshot::channel();
+    runtime.spawn(async move {
+        let result = tokio::time::timeout(PROBE_TIMEOUT, async {
+            let mut client = connect(&connection).await?;
+            let targets = client
+                .list_targets(v1::ListTargetsRequest { all: true })
+                .await?
+                .into_inner()
+                .targets;
+            anyhow::Ok(targets.len())
+        })
+        .await
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("no answer after {} seconds", PROBE_TIMEOUT.as_secs())))
+        .map_err(|e| describe(&e));
+        let _ = tx.send(result);
+    });
+    rx
+}
+
+/// Tails every running target on the server, reconnecting until the receiver or the last
+/// [`Client`] handle is dropped.
 pub fn spawn(runtime: &tokio::runtime::Handle, connection: Connection) -> (Client, UnboundedReceiver<ClientEvent>) {
     let (tx, rx) = unbounded();
     let retry = Arc::new(Notify::new());
+    let (alive, mut dropped) = watch::channel(());
     let client = Client {
         retry: retry.clone(),
+        _alive: Arc::new(alive),
         connection: connection.clone(),
         runtime: runtime.clone(),
         tx: tx.clone(),
@@ -150,9 +182,13 @@ pub fn spawn(runtime: &tokio::runtime::Handle, connection: Connection) -> (Clien
     runtime.spawn(async move {
         while !tx.is_closed() {
             let _ = tx.unbounded_send(ClientEvent::Connecting);
-            let reason = match tail_once(&connection, &tx).await {
-                Ok(()) => "stream ended".to_string(),
-                Err(e) => describe(&e),
+            let reason = tokio::select! {
+                result = tail_once(&connection, &tx) => match result {
+                    Ok(()) => "stream ended".to_string(),
+                    Err(e) => describe(&e),
+                },
+                // Nothing is ever sent, so this finishes only when the last handle is dropped.
+                _ = dropped.changed() => break,
             };
             if tx.unbounded_send(ClientEvent::Disconnected { reason }).is_err() {
                 break;
@@ -160,6 +196,7 @@ pub fn spawn(runtime: &tokio::runtime::Handle, connection: Connection) -> (Clien
             tokio::select! {
                 _ = tokio::time::sleep(RECONNECT_DELAY) => {}
                 _ = retry.notified() => {}
+                _ = dropped.changed() => break,
             }
         }
     });
@@ -171,7 +208,7 @@ fn describe(e: &anyhow::Error) -> String {
     if let Some(status) = e.downcast_ref::<tonic::Status>()
         && status.code() == tonic::Code::Unauthenticated
     {
-        return "invalid or missing token (set TELELOG_TOKEN)".into();
+        return "invalid or missing token".into();
     }
     let root = e.root_cause().to_string();
     let lower = root.to_lowercase();
@@ -234,6 +271,6 @@ mod tests {
     #[test]
     fn explains_auth_failures() {
         let error = anyhow::Error::from(tonic::Status::unauthenticated("invalid or missing token"));
-        assert_eq!(describe(&error), "invalid or missing token (set TELELOG_TOKEN)");
+        assert_eq!(describe(&error), "invalid or missing token");
     }
 }

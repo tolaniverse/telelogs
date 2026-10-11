@@ -20,6 +20,8 @@ pub enum Action {
     Reconnect,
     Solo(String),
     Range(TimeRange),
+    SwitchServer(String),
+    AddServer,
 }
 
 #[derive(Clone)]
@@ -93,6 +95,31 @@ impl Workspace {
             "",
             Action::Range(TimeRange::All),
         ));
+        let open_id = self.open.saved.as_ref().map(|server| server.id.as_str());
+        all.extend(
+            self.servers
+                .list
+                .iter()
+                .filter(|server| Some(server.id.as_str()) != open_id)
+                .map(|server| Command {
+                    group: "Servers",
+                    label: format!("Switch to {}", server.name),
+                    glyph: Icon::HardDrives,
+                    shortcut: "",
+                    action: Action::SwitchServer(server.id.clone()),
+                }),
+        );
+        all.push(command(
+            "Servers",
+            if self.open.saved.is_none() {
+                "Save this server…"
+            } else {
+                "Add server…"
+            },
+            Icon::Plus,
+            "",
+            Action::AddServer,
+        ));
         if matches!(self.status, Status::Disconnected { .. }) {
             all.push(command(
                 "Actions",
@@ -147,6 +174,18 @@ impl Workspace {
             Action::Range(range) => {
                 self.screen = Screen::Stream;
                 self.set_range(range, cx);
+            }
+            Action::SwitchServer(id) => {
+                if let Some(server) = self.servers.get(&id) {
+                    let open = server.open();
+                    self.switch_server(open, cx);
+                }
+            }
+            Action::AddServer => {
+                let from = self.open.saved.is_none().then(|| self.open.connection.clone());
+                self.open_add_server(from, window, cx);
+                // The dialog keeps its own focus; don't hand it back to the workspace below.
+                return;
             }
         }
         self.focus.focus(window, cx);

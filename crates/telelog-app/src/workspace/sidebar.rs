@@ -5,9 +5,10 @@ use std::collections::BTreeMap;
 use telelog_core::{SourceKind, Target};
 
 use super::{Screen, Status, Workspace, namespace_of};
+use crate::servers;
 use crate::theme::{MONO, tokens};
 use crate::ui::canvas::brand_mark;
-use crate::ui::widgets::{checkbox, checkbox_mixed, halo_dot, kbd, pill};
+use crate::ui::widgets::{checkbox, checkbox_mixed, dot, halo_dot, kbd, pill};
 use crate::ui::{Icon, icon};
 
 pub fn kind_label(kind: SourceKind) -> &'static str {
@@ -266,6 +267,142 @@ impl Workspace {
             .collect()
     }
 
+    /// Saved servers to switch to, and ways to add one.
+    fn render_server_menu(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let t = tokens(cx);
+        let status_color = self.status_color(cx);
+        let open_id = self.open.saved.as_ref().map(|server| server.id.clone());
+
+        let row = |id: SharedString| {
+            div()
+                .id(id.clone())
+                .group(id)
+                .h(px(40.))
+                .px(px(10.))
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .rounded(px(6.))
+                .cursor_pointer()
+                .hover(|s| s.bg(t.bg3))
+        };
+        let label = |name: String, address: String| {
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
+                        .text_size(px(12.5))
+                        .child(name),
+                )
+                .child(
+                    div()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
+                        .font_family(MONO)
+                        .text_size(px(11.))
+                        .text_color(t.fg3)
+                        .child(address),
+                )
+        };
+
+        let mut items: Vec<AnyElement> = Vec::new();
+        if self.open.saved.is_none() {
+            // The server given on the command line, until it's saved.
+            let connection = self.open.connection.clone();
+            items.push(
+                row("server-unsaved".into())
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_add_server(Some(connection.clone()), window, cx)
+                    }))
+                    .child(dot(status_color, 7.))
+                    .child(label(self.open.name(), self.server_addr().to_string()))
+                    .child(div().text_size(px(12.)).text_color(t.fg2).child("Save…"))
+                    .into_any_element(),
+            );
+        }
+        for server in &self.servers.list {
+            let current = open_id.as_deref() == Some(server.id.as_str());
+            let group: SharedString = format!("server-{}", server.id).into();
+            let (switch, remove) = (server.clone(), server.id.clone());
+            items.push(
+                row(group.clone())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this.open.saved.as_ref() == Some(&switch) {
+                            this.server_menu_open = false;
+                            cx.notify();
+                        } else {
+                            this.switch_server(switch.open(), cx);
+                        }
+                    }))
+                    .child(dot(if current { status_color } else { t.line2 }, 7.))
+                    .child(label(server.name.clone(), servers::address(&server.url).to_string()))
+                    .when(current, |el| el.child(icon(Icon::Check, 13., t.fg)))
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("remove-server-{}", server.id)))
+                            .invisible()
+                            .group_hover(group, |s| s.visible())
+                            .size(px(22.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(5.))
+                            .hover(|s| s.bg(t.bg4))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.remove_server(&remove, cx);
+                            }))
+                            .child(icon(Icon::X, 12., t.fg3)),
+                    )
+                    .into_any_element(),
+            );
+        }
+
+        div()
+            .p(px(6.))
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .rounded(px(10.))
+            .border_1()
+            .border_color(t.line2)
+            .bg(t.bg)
+            .shadow_lg()
+            .occlude()
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.server_menu_open = false;
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .px(px(10.))
+                    .pt(px(6.))
+                    .pb(px(4.))
+                    .text_size(px(11.5))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(t.fg3)
+                    .child("Servers"),
+            )
+            .children(items)
+            .child(div().my(px(4.)).h(px(1.)).bg(t.line))
+            .child(
+                row("add-server".into())
+                    .h(px(34.))
+                    .text_size(px(12.5))
+                    .text_color(t.fg2)
+                    .on_click(cx.listener(|this, _, window, cx| this.open_add_server(None, window, cx)))
+                    .child(icon(Icon::Plus, 13., t.fg2))
+                    .child("Add server…"),
+            )
+    }
+
     pub(super) fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = tokens(cx);
         let status_color = self.status_color(cx);
@@ -304,6 +441,7 @@ impl Workspace {
             );
 
         let server_card = div()
+            .id("server-card")
             .w_full()
             .px(px(10.))
             .py(px(8.))
@@ -312,8 +450,15 @@ impl Workspace {
             .gap(px(10.))
             .rounded(px(8.))
             .border_1()
-            .border_color(t.line2)
+            .border_color(if self.server_menu_open { t.fg3 } else { t.line2 })
             .bg(t.bg)
+            .cursor_pointer()
+            .hover(|s| s.bg(t.bg3))
+            // The menu closes itself on any click outside it, this card included.
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.server_menu_open = true;
+                cx.notify();
+            }))
             .child(halo_dot(t, status_color, matches!(self.status, Status::Connected)))
             .child(
                 div()
@@ -324,12 +469,18 @@ impl Workspace {
                     .gap(px(1.))
                     .child(
                         div()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
                             .text_size(px(12.5))
                             .font_weight(FontWeight::MEDIUM)
-                            .child("local server"),
+                            .child(self.open.name()),
                     )
                     .child(
                         div()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
                             .font_family(MONO)
                             .text_size(px(11.))
                             .text_color(t.fg3)
@@ -337,6 +488,19 @@ impl Workspace {
                     ),
             )
             .child(icon(Icon::CaretUpDown, 13., t.fg3));
+        let server_card = div().relative().child(server_card).when(self.server_menu_open, |el| {
+            el.child(
+                deferred(
+                    div()
+                        .absolute()
+                        .top(px(54.))
+                        .left_0()
+                        .right_0()
+                        .child(self.render_server_menu(cx)),
+                )
+                .with_priority(1),
+            )
+        });
 
         let search = div()
             .id("open-search")

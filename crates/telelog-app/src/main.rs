@@ -4,7 +4,9 @@ use gpui_kit::*;
 
 mod assets;
 mod client;
+mod config;
 mod json;
+mod servers;
 mod theme;
 mod time_range;
 mod ui;
@@ -13,9 +15,10 @@ mod workspace;
 #[derive(Parser)]
 #[command(version, about = "Telelogs desktop app")]
 struct Args {
-    /// telelog-server gRPC endpoint (http:// or https://).
-    #[arg(long, env = "TELELOG_SERVER", default_value = "http://127.0.0.1:7070")]
-    server: String,
+    /// telelog-server gRPC endpoint (http:// or https://). Without it, the app opens the server
+    /// used last, or http://127.0.0.1:7070.
+    #[arg(long, env = "TELELOG_SERVER")]
+    server: Option<String>,
 
     /// Token the server expects (see `telelog-server gen-token`).
     #[arg(long, env = "TELELOG_TOKEN", hide_env_values = true)]
@@ -26,15 +29,29 @@ struct Args {
     ca_cert: Option<std::path::PathBuf>,
 }
 
+const DEFAULT_SERVER: &str = "http://127.0.0.1:7070";
+
 fn main() -> Result<()> {
     let args = Args::parse();
-    let connection = client::Connection {
-        server: args.server.clone(),
-        token: args.token.filter(|t| !t.is_empty()),
-        ca_pem: args
-            .ca_cert
-            .map(|path| std::fs::read(&path).map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display())))
-            .transpose()?,
+    let servers = servers::Servers::load();
+    let token = args.token.filter(|t| !t.is_empty());
+    let given = |server: String| {
+        servers::Open::unsaved(client::Connection {
+            server,
+            token: token.clone(),
+            ca_cert: args.ca_cert.clone(),
+        })
+    };
+    // A saved server named by its URL opens as itself, unless a token or CA given alongside
+    // it says to connect differently.
+    let open = match args.server {
+        Some(url) => match servers.find_url(&url) {
+            Some(saved) if token.is_none() && args.ca_cert.is_none() => saved.open(),
+            _ => given(url),
+        },
+        None => servers
+            .initial()
+            .map_or_else(|| given(DEFAULT_SERVER.into()), |saved| saved.open()),
     };
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -65,8 +82,7 @@ fn main() -> Result<()> {
             ..Default::default()
         };
         gpui_kit::open_window(options, cx, |window, cx| {
-            let (client, events) = client::spawn(&handle, connection.clone());
-            cx.new(|cx| workspace::Workspace::new(args.server.clone(), client, events, window, cx))
+            cx.new(|cx| workspace::Workspace::new(open, servers, handle, window, cx))
         })
         .expect("failed to open window");
         cx.activate(true);

@@ -5,7 +5,6 @@
 //! saved by name and overrides its namespace.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -42,46 +41,35 @@ impl Selections {
         self.namespaces.insert(namespace.to_string(), on);
     }
 
-    /// The selections saved for `server`, or none if there are none or the file can't be read.
-    pub fn load(server: &str) -> Self {
-        let Some(path) = file() else {
-            return Self::default();
-        };
-        read_all(&path).remove(server).unwrap_or_default()
+    /// The selections saved under `key`. A saved server is keyed by its id; before servers were
+    /// saved, selections were keyed by URL, so `legacy` names the URL to fall back on.
+    pub fn load(key: &str, legacy: Option<&str>) -> Self {
+        let mut all = read_all();
+        all.remove(key)
+            .or_else(|| legacy.and_then(|url| all.remove(url)))
+            .unwrap_or_default()
     }
 
-    /// Saves these selections for `server`, keeping other servers' as they are.
-    pub fn save(&self, server: &str) {
-        let Some(path) = file() else {
-            return;
-        };
-        let mut all = read_all(&path);
-        all.insert(server.to_string(), self.clone());
-        if let Err(e) = write_all(&path, &all) {
-            eprintln!("telelogs: saving source selections to {}: {e}", path.display());
+    /// Saves these selections under `key`, keeping other servers' as they are.
+    pub fn save(&self, key: &str) {
+        let mut all = read_all();
+        all.insert(key.to_string(), self.clone());
+        crate::config::write(FILE, &all);
+    }
+
+    /// Drops the selections saved under `key`, for a server that was removed.
+    pub fn forget(key: &str) {
+        let mut all = read_all();
+        if all.remove(key).is_some() {
+            crate::config::write(FILE, &all);
         }
     }
 }
 
-fn file() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("telelogs").join("selections.json"))
-}
+const FILE: &str = "selections.json";
 
-fn read_all(path: &PathBuf) -> BTreeMap<String, Selections> {
-    std::fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default()
-}
-
-/// Writes through a temporary file, so a crash mid-write can't leave half a file behind.
-fn write_all(path: &PathBuf, all: &BTreeMap<String, Selections>) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(all)?)?;
-    std::fs::rename(tmp, path)
+fn read_all() -> BTreeMap<String, Selections> {
+    crate::config::read(FILE)
 }
 
 #[cfg(test)]

@@ -24,6 +24,7 @@ rust-embed = "8"
 serde.workspace = true
 serde_json = { version = "1", features = ["preserve_order"] }
 gpui-kit = "0.7"
+keyring = { version = "3", features = ["apple-native"] }
 telelog-core.workspace = true
 telelog-proto.workspace = true
 tokio.workspace = true

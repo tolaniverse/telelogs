@@ -83,6 +83,9 @@ docker run -d --rm --name telelog-demo alpine sh -c \
 
 ## Using the app
 
+- **Servers:** click the server card at the top of the sidebar to switch servers, or **Add server…** to save one
+  with its URL, token and CA certificate (**Test** checks it first). Tokens are kept in the macOS Keychain. The
+  app reopens the server you used last; `--server` opens another one, which you can then save from the same menu.
 - **Sources:** tick the containers and pods to show in the stream. Hiding one doesn't stop the server reading it.
   Your choices are saved for each server, and a namespace's choice applies to its pods as they're replaced.
 - **Filter:** by text (message or source name), by level (Error, Warn, Info, Debug) and by time range. With a
