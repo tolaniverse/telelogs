@@ -1,0 +1,32 @@
+[package]
+name = "telelog-collector"
+description = "Telelogs collector: reads Docker and Kubernetes logs and serves them to Telelog Cloud over one outbound connection"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["logs", "docker", "kubernetes", "telelogs"]
+categories = ["command-line-utilities", "development-tools::debugging"]
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+dirs = "6"
+futures.workspace = true
+gethostname = "1"
+getrandom = "0.3"
+prost.workspace = true
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+serde.workspace = true
+serde_json = "1"
+telelog-proto.workspace = true
+telelog-sources.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tonic.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

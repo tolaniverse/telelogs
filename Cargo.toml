@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/telelog-core", "crates/telelog-proto", "crates/telelog-sources", "crates/telelog-server", "crates/telelog-app"]
+members = ["crates/telelog-core", "crates/telelog-proto", "crates/telelog-sources", "crates/telelog-server", "crates/telelog-collector", "crates/telelog-app"]
 
 [workspace.package]
 version = "0.3.1"

@@ -7832,6 +7832,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "telelog-collector"
+version = "0.3.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "dirs 6.0.0",
+ "futures",
+ "gethostname",
+ "getrandom 0.3.4",
+ "prost",
+ "rustls",
+ "serde",
+ "serde_json",
+ "telelog-proto",
+ "telelog-sources",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "telelog-core"
 version = "0.3.1"
 dependencies = [
