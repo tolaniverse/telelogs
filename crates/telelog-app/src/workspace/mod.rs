@@ -152,9 +152,13 @@ pub struct Workspace {
 
     server_menu_open: bool,
     add_server_open: bool,
+    server_dialog: add_server::Dialog,
     server_inputs: add_server::Inputs,
     server_check: add_server::Check,
     _server_check: Option<Task<()>>,
+    /// The signed-in Telelog Cloud workspace's collectors: None until fetched.
+    cloud_collectors: Option<Result<Vec<telelog_proto::cloud::v1::Collector>, String>>,
+    _cloud_fetch: Option<Task<()>>,
 
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -208,8 +212,7 @@ impl Workspace {
         focus.focus(window, cx);
 
         let selections = Self::load_selections(&open);
-        if let Some(saved) = &open.saved {
-            servers.last = Some(saved.id.clone());
+        if servers.remember(&open) {
             servers.save();
         }
         Workspace {
@@ -254,9 +257,12 @@ impl Workspace {
             add_inputs: add_source::Inputs::new(window, cx),
             server_menu_open: false,
             add_server_open: false,
+            server_dialog: add_server::Dialog::Server,
             server_inputs: add_server::Inputs::new(window, cx),
             server_check: add_server::Check::Idle,
             _server_check: None,
+            cloud_collectors: None,
+            _cloud_fetch: None,
             focus,
             _subscriptions: subscriptions,
             _pump: pump,
@@ -285,7 +291,7 @@ impl Workspace {
     }
 
     fn server_addr(&self) -> &str {
-        servers::address(&self.open.connection.server)
+        self.open.address()
     }
 
     /// Disconnects from the current server and shows `open` in its place. Filters, the time
@@ -296,8 +302,7 @@ impl Workspace {
         self.client = client;
         self._pump = Self::pump(events, cx);
         self.selections = Self::load_selections(&open);
-        if let Some(saved) = &open.saved {
-            self.servers.last = Some(saved.id.clone());
+        if self.servers.remember(&open) {
             self.servers.save();
         }
         self.open = open;
@@ -312,6 +317,36 @@ impl Workspace {
         if self.screen == Screen::Storage {
             self.client.fetch_storage();
         }
+    }
+
+    /// Fetches the Telelog Cloud workspace's collectors for the servers menu, if signed in.
+    fn fetch_collectors(&mut self, cx: &mut Context<Self>) {
+        let Some(account) = &self.servers.cloud else {
+            self.cloud_collectors = None;
+            return;
+        };
+        let answer = client::collectors(&self.runtime, account.connection());
+        self._cloud_fetch = Some(cx.spawn(async move |this, cx| {
+            let result = answer.await.unwrap_or_else(|_| Err("stopped".into()));
+            let _ = this.update(cx, |this, cx| {
+                this.cloud_collectors = Some(result);
+                cx.notify();
+            });
+        }));
+    }
+
+    /// Forgets the Telelog Cloud sign-in. A collector that's open stays open until another
+    /// server is picked.
+    fn sign_out_cloud(&mut self, cx: &mut Context<Self>) {
+        self.servers.cloud = None;
+        self.servers.last_cloud = None;
+        self.servers.save();
+        if let Err(e) = servers::set_token(servers::CLOUD_TOKEN, None) {
+            eprintln!("telelogs: removing the Telelog Cloud token: {e}");
+        }
+        self.cloud_collectors = None;
+        self._cloud_fetch = None;
+        cx.notify();
     }
 
     /// Forgets a saved server, its token and its selections. If it's the one open, it stays
@@ -734,6 +769,7 @@ impl Workspace {
     }
 
     fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.fetch_collectors(cx);
         self.palette_open = true;
         self.add_open = false;
         self.palette_index = 0;

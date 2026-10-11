@@ -363,7 +363,11 @@ impl Workspace {
             Status::Connecting => (
                 SphereMode::Connecting,
                 format!("Connecting to {addr}"),
-                "telelog-server · LogService.Tail".to_string(),
+                if self.open.cloud.is_some() {
+                    "Telelog Cloud · through the relay".to_string()
+                } else {
+                    "telelog-server · LogService.Tail".to_string()
+                },
             ),
             Status::Disconnected { reason } => (
                 SphereMode::Disconnected,

@@ -1,4 +1,5 @@
-//! Talks to telelog-server on a dedicated tokio runtime and forwards events to the UI.
+//! Talks to telelog-server, or to a collector through Telelog Cloud, on a dedicated tokio
+//! runtime and forwards events to the UI.
 //!
 //! GPUI runs its own executor, and tonic needs tokio, so the two meet over a channel.
 
@@ -11,8 +12,11 @@ use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use futures::channel::oneshot;
 use telelog_core::{LogRecord, Target};
+use telelog_proto::cloud::v1::Collector;
 use telelog_proto::v1;
 use tokio::sync::{Notify, watch};
+
+use crate::remote;
 
 /// Lines of history to request per target when (re)connecting.
 pub const BACKLOG: u32 = 500;
@@ -72,8 +76,8 @@ impl Client {
         let (connection, tx) = (self.connection.clone(), self.tx.clone());
         self.runtime.spawn(async move {
             let result = async {
-                let mut client = connect(&connection).await?;
-                let mut stream = client
+                let mut remote = remote::connect(&connection).await?;
+                let mut stream = remote
                     .query(v1::QueryRequest {
                         from: from.map(telelog_proto::to_timestamp),
                         to: Some(telelog_proto::to_timestamp(to)),
@@ -84,8 +88,7 @@ impl Client {
                             .collect(),
                         ..Default::default()
                     })
-                    .await?
-                    .into_inner();
+                    .await?;
                 let mut records = Vec::new();
                 while let Some(record) = stream.next().await {
                     records.push(record?.into());
@@ -103,8 +106,8 @@ impl Client {
         let (connection, tx) = (self.connection.clone(), self.tx.clone());
         self.runtime.spawn(async move {
             let result = async {
-                let mut client = connect(&connection).await?;
-                anyhow::Ok(client.get_storage(v1::GetStorageRequest {}).await?.into_inner())
+                let mut remote = remote::connect(&connection).await?;
+                anyhow::Ok(remote.get_storage().await?)
             }
             .await
             .map_err(|e| describe_request(&e));
@@ -124,46 +127,105 @@ fn describe_request(e: &anyhow::Error) -> String {
     }
 }
 
-async fn connect(connection: &Connection) -> anyhow::Result<telelog_proto::auth::Client> {
-    // Read on every connect, so a renewed certificate is picked up without a restart.
-    let ca_pem = match &connection.ca_cert {
-        Some(path) => Some(std::fs::read(path).map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?),
-        None => None,
-    };
-    telelog_proto::auth::connect(&connection.server, connection.token.as_deref(), ca_pem.as_deref()).await
-}
-
-/// Where and how to reach telelog-server.
+/// Where and how to reach a server.
 #[derive(Clone)]
 pub struct Connection {
+    /// telelog-server, or Telelog Cloud's gateway when `collector` is set.
     pub server: String,
-    pub token: Option<String>,
+    pub token: Token,
     /// PEM CA certificate to trust for an `https://` server with a self-signed certificate.
     pub ca_cert: Option<PathBuf>,
+    /// A collector to reach through the gateway's relay.
+    pub collector: Option<String>,
 }
 
-/// Longest the Add server dialog waits for a test connection.
+/// A token, or where in the Keychain to find one.
+///
+/// A Keychain read can stop to ask the user for permission, so it happens when connecting, off
+/// the UI thread, and once per connection: a reconnect doesn't ask again.
+#[derive(Clone)]
+pub enum Token {
+    None,
+    Given(String),
+    Keychain {
+        id: String,
+        read: Arc<std::sync::OnceLock<Option<String>>>,
+    },
+}
+
+impl Token {
+    pub fn given(token: Option<String>) -> Self {
+        token.map_or(Token::None, Token::Given)
+    }
+
+    pub fn keychain(id: &str) -> Self {
+        Token::Keychain {
+            id: id.to_string(),
+            read: Arc::default(),
+        }
+    }
+
+    /// The token as typed or given on the command line; None for one in the Keychain.
+    pub fn as_given(&self) -> Option<&str> {
+        match self {
+            Token::Given(token) => Some(token),
+            Token::None | Token::Keychain { .. } => None,
+        }
+    }
+
+    /// Reads it, blocking on the Keychain the first time; call it off the UI thread.
+    pub fn resolve(&self) -> Option<String> {
+        match self {
+            Token::None => None,
+            Token::Given(token) => Some(token.clone()),
+            Token::Keychain { id, read } => read.get_or_init(|| crate::servers::token(id)).clone(),
+        }
+    }
+}
+
+/// Longest the dialogs wait for a test connection.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Connects once and counts the server's targets, to test a server before it's saved.
-pub fn probe(runtime: &tokio::runtime::Handle, connection: Connection) -> oneshot::Receiver<Result<usize, String>> {
+/// Runs `request` once on the runtime with a time limit; the answer arrives on the receiver.
+fn once<T: Send + 'static>(
+    runtime: &tokio::runtime::Handle,
+    request: impl Future<Output = anyhow::Result<T>> + Send + 'static,
+) -> oneshot::Receiver<Result<T, String>> {
     let (tx, rx) = oneshot::channel();
     runtime.spawn(async move {
-        let result = tokio::time::timeout(PROBE_TIMEOUT, async {
-            let mut client = connect(&connection).await?;
-            let targets = client
-                .list_targets(v1::ListTargetsRequest { all: true })
-                .await?
-                .into_inner()
-                .targets;
-            anyhow::Ok(targets.len())
-        })
-        .await
-        .unwrap_or_else(|_| Err(anyhow::anyhow!("no answer after {} seconds", PROBE_TIMEOUT.as_secs())))
-        .map_err(|e| describe(&e));
+        let result = tokio::time::timeout(PROBE_TIMEOUT, request)
+            .await
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("no answer after {} seconds", PROBE_TIMEOUT.as_secs())))
+            .map_err(|e| describe(&e));
         let _ = tx.send(result);
     });
     rx
+}
+
+/// Connects once and counts the server's targets, to test a server before it's saved.
+pub fn probe(runtime: &tokio::runtime::Handle, connection: Connection) -> oneshot::Receiver<Result<usize, String>> {
+    once(runtime, async move {
+        let mut remote = remote::connect(&connection).await?;
+        anyhow::Ok(remote.list_targets(true).await?.len())
+    })
+}
+
+/// Signs in to Telelog Cloud once and counts the workspace's collectors, to test the sign-in.
+pub fn probe_cloud(
+    runtime: &tokio::runtime::Handle,
+    connection: Connection,
+) -> oneshot::Receiver<Result<usize, String>> {
+    once(runtime, async move {
+        anyhow::Ok(remote::list_collectors(&connection).await?.len())
+    })
+}
+
+/// The collectors in the Telelog Cloud workspace `connection` signs in to.
+pub fn collectors(
+    runtime: &tokio::runtime::Handle,
+    connection: Connection,
+) -> oneshot::Receiver<Result<Vec<Collector>, String>> {
+    once(runtime, async move { remote::list_collectors(&connection).await })
 }
 
 /// Tails every running target on the server, reconnecting until the receiver or the last
@@ -205,10 +267,11 @@ pub fn spawn(runtime: &tokio::runtime::Handle, connection: Connection) -> (Clien
 
 /// The innermost cause reads best in the UI ("connection refused" rather than a transport chain).
 fn describe(e: &anyhow::Error) -> String {
+    // A status carries the other side's own words ("the collector is offline").
     if let Some(status) = e.downcast_ref::<tonic::Status>()
-        && status.code() == tonic::Code::Unauthenticated
+        && !status.message().is_empty()
     {
-        return "invalid or missing token".into();
+        return status.message().to_string();
     }
     let root = e.root_cause().to_string();
     let lower = root.to_lowercase();
@@ -220,37 +283,28 @@ fn describe(e: &anyhow::Error) -> String {
 }
 
 async fn tail_once(connection: &Connection, tx: &UnboundedSender<ClientEvent>) -> anyhow::Result<()> {
-    let mut client = connect(connection).await?;
+    let mut remote = remote::connect(connection).await?;
 
     // Subscribe to state changes before listing, so none fall in the gap. Replaying an event
     // that the listing already reflects is harmless: each one carries the final state.
     // Servers older than WatchTargets answer Unimplemented; keep tailing without live state.
-    let changes = match client.watch_targets(v1::WatchTargetsRequest {}).await {
-        Ok(response) => response
-            .into_inner()
+    let changes = match remote.watch_targets().await {
+        Ok(changes) => changes
             .map(|target| target.map(|t| ClientEvent::TargetChanged(t.into())))
             .boxed(),
         Err(status) if status.code() == tonic::Code::Unimplemented => futures::stream::pending().boxed(),
         Err(status) => return Err(status.into()),
     };
 
-    let targets: Vec<Target> = client
-        .list_targets(v1::ListTargetsRequest { all: true })
-        .await?
-        .into_inner()
-        .targets
-        .into_iter()
-        .map(Into::into)
-        .collect();
+    let targets: Vec<Target> = remote.list_targets(true).await?.into_iter().map(Into::into).collect();
     tx.unbounded_send(ClientEvent::Connected { targets })?;
 
-    let records = client
+    let records = remote
         .tail(v1::TailRequest {
             target_ids: Vec::new(),
             backlog: BACKLOG,
         })
         .await?
-        .into_inner()
         .map(|record| record.map(|r| ClientEvent::Record(r.into())));
 
     // The log stream ending means the connection is over, whatever the watch stream is doing.

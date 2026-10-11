@@ -609,6 +609,15 @@ impl Workspace {
                 "Couldn’t read storage",
                 Some(error.clone().into()),
             )),
+            Some(Ok(info)) if !info.enabled && self.open.cloud.is_some() => card(t).child(empty_state(
+                t,
+                Icon::Cylinder,
+                "Telelog Cloud doesn’t store logs yet",
+                Some(
+                    "Lines from this collector stay in the app’s memory. Cloud storage comes with the storage add-on."
+                        .into(),
+                ),
+            )),
             Some(Ok(info)) if !info.enabled => card(t).child(archive_setup(t)),
             Some(Ok(info)) => card(t)
                 .child(table_head(

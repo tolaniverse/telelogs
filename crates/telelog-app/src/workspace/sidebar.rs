@@ -267,7 +267,7 @@ impl Workspace {
             .collect()
     }
 
-    /// Saved servers to switch to, and ways to add one.
+    /// Saved servers and Telelog Cloud collectors to switch to, and ways to add more.
     fn render_server_menu(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = tokens(cx);
         let status_color = self.status_color(cx);
@@ -312,8 +312,28 @@ impl Workspace {
                 )
         };
 
+        let heading = |title: &'static str| {
+            div()
+                .px(px(10.))
+                .pt(px(6.))
+                .pb(px(4.))
+                .text_size(px(11.5))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(t.fg3)
+                .child(title)
+        };
+        let note = |text: String| {
+            div()
+                .px(px(10.))
+                .py(px(6.))
+                .text_size(px(12.))
+                .text_color(t.fg3)
+                .child(text)
+                .into_any_element()
+        };
+
         let mut items: Vec<AnyElement> = Vec::new();
-        if self.open.saved.is_none() {
+        if self.open.is_unsaved() {
             // The server given on the command line, until it's saved.
             let connection = self.open.connection.clone();
             items.push(
@@ -365,6 +385,73 @@ impl Workspace {
             );
         }
 
+        let mut cloud: Vec<AnyElement> = Vec::new();
+        if let Some(account) = &self.servers.cloud {
+            cloud.push(
+                div()
+                    .mt(px(4.))
+                    .pr(px(10.))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(heading("Telelog Cloud"))
+                    .child(
+                        div()
+                            .id("cloud-sign-out")
+                            .text_size(px(11.5))
+                            .text_color(t.fg3)
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(t.fg))
+                            .on_click(cx.listener(|this, _, _, cx| this.sign_out_cloud(cx)))
+                            .child("Sign out"),
+                    )
+                    .into_any_element(),
+            );
+            match &self.cloud_collectors {
+                None => cloud.push(note("Loading collectors…".into())),
+                Some(Err(e)) => cloud.push(note(format!("Couldn’t list collectors: {e}"))),
+                Some(Ok(list)) if list.is_empty() => cloud.push(note(
+                    "No collectors yet. Enroll one with telelog-collector --enroll.".into(),
+                )),
+                Some(Ok(list)) => {
+                    for collector in list {
+                        let current = self.open.cloud.as_ref().is_some_and(|open| open.id == collector.id);
+                        let pick = servers::CloudCollector {
+                            id: collector.id.clone(),
+                            name: collector.name.clone(),
+                            host: collector.host.clone(),
+                        };
+                        let account = account.clone();
+                        let place = if collector.online {
+                            collector.host.clone()
+                        } else {
+                            format!("{} · offline", collector.host)
+                        };
+                        let color = match (current, collector.online) {
+                            (true, _) => status_color,
+                            (false, true) => t.ok,
+                            (false, false) => t.line2,
+                        };
+                        cloud.push(
+                            row(format!("collector-{}", collector.id).into())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if current {
+                                        this.server_menu_open = false;
+                                        cx.notify();
+                                    } else {
+                                        this.switch_server(account.open(pick.clone()), cx);
+                                    }
+                                }))
+                                .child(dot(color, 7.))
+                                .child(label(collector.name.clone(), place))
+                                .when(current, |el| el.child(icon(Icon::Check, 13., t.fg)))
+                                .into_any_element(),
+                        );
+                    }
+                }
+            }
+        }
+
         div()
             .p(px(6.))
             .flex()
@@ -380,17 +467,9 @@ impl Workspace {
                 this.server_menu_open = false;
                 cx.notify();
             }))
-            .child(
-                div()
-                    .px(px(10.))
-                    .pt(px(6.))
-                    .pb(px(4.))
-                    .text_size(px(11.5))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(t.fg3)
-                    .child("Servers"),
-            )
+            .child(heading("Servers"))
             .children(items)
+            .children(cloud)
             .child(div().my(px(4.)).h(px(1.)).bg(t.line))
             .child(
                 row("add-server".into())
@@ -401,6 +480,17 @@ impl Workspace {
                     .child(icon(Icon::Plus, 13., t.fg2))
                     .child("Add server…"),
             )
+            .when(self.servers.cloud.is_none(), |el| {
+                el.child(
+                    row("cloud-sign-in".into())
+                        .h(px(34.))
+                        .text_size(px(12.5))
+                        .text_color(t.fg2)
+                        .on_click(cx.listener(|this, _, window, cx| this.open_cloud_sign_in(window, cx)))
+                        .child(icon(Icon::Broadcast, 13., t.fg2))
+                        .child("Sign in to Telelog Cloud…"),
+                )
+            })
     }
 
     pub(super) fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -457,6 +547,7 @@ impl Workspace {
             // The menu closes itself on any click outside it, this card included.
             .on_click(cx.listener(|this, _, _, cx| {
                 this.server_menu_open = true;
+                this.fetch_collectors(cx);
                 cx.notify();
             }))
             .child(halo_dot(t, status_color, matches!(self.status, Status::Connected)))

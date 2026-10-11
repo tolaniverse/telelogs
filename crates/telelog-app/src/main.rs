@@ -6,6 +6,7 @@ mod assets;
 mod client;
 mod config;
 mod json;
+mod remote;
 mod servers;
 mod theme;
 mod time_range;
@@ -27,6 +28,11 @@ struct Args {
     /// PEM CA certificate to trust, for an https:// server with a self-signed certificate.
     #[arg(long, env = "TELELOG_CA_CERT")]
     ca_cert: Option<std::path::PathBuf>,
+
+    /// Open this Telelog Cloud collector, with --server naming the gateway and --token your
+    /// workspace token. Signing in from the servers menu does the same without flags.
+    #[arg(long, env = "TELELOG_COLLECTOR", requires = "server")]
+    collector: Option<String>,
 }
 
 const DEFAULT_SERVER: &str = "http://127.0.0.1:7070";
@@ -38,20 +44,33 @@ fn main() -> Result<()> {
     let given = |server: String| {
         servers::Open::unsaved(client::Connection {
             server,
-            token: token.clone(),
+            token: client::Token::given(token.clone()),
             ca_cert: args.ca_cert.clone(),
+            collector: None,
         })
     };
     // A saved server named by its URL opens as itself, unless a token or CA given alongside
     // it says to connect differently.
-    let open = match args.server {
-        Some(url) => match servers.find_url(&url) {
+    let open = match (args.server, args.collector) {
+        (Some(gateway), Some(collector)) => servers::Open {
+            saved: None,
+            cloud: Some(servers::CloudCollector {
+                id: collector.clone(),
+                name: collector.clone(),
+                host: String::new(),
+            }),
+            connection: client::Connection {
+                server: gateway,
+                token: client::Token::given(token.clone()),
+                ca_cert: args.ca_cert.clone(),
+                collector: Some(collector),
+            },
+        },
+        (Some(url), None) => match servers.find_url(&url) {
             Some(saved) if token.is_none() && args.ca_cert.is_none() => saved.open(),
             _ => given(url),
         },
-        None => servers
-            .initial()
-            .map_or_else(|| given(DEFAULT_SERVER.into()), |saved| saved.open()),
+        (None, _) => servers.initial().unwrap_or_else(|| given(DEFAULT_SERVER.into())),
     };
 
     let runtime = tokio::runtime::Builder::new_multi_thread()

@@ -7929,12 +7929,14 @@ dependencies = [
  "futures",
  "gpui-kit",
  "keyring",
+ "prost",
  "rust-embed",
  "serde",
  "serde_json",
  "telelog-core",
  "telelog-proto",
  "tokio",
+ "tokio-stream",
  "tonic",
 ]
 

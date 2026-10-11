@@ -22,6 +22,8 @@ pub enum Action {
     Range(TimeRange),
     SwitchServer(String),
     AddServer,
+    SwitchCollector(crate::servers::CloudCollector),
+    SignInCloud,
 }
 
 #[derive(Clone)]
@@ -109,9 +111,37 @@ impl Workspace {
                     action: Action::SwitchServer(server.id.clone()),
                 }),
         );
+        if let Some(Ok(collectors)) = &self.cloud_collectors {
+            let open_id = self.open.cloud.as_ref().map(|c| c.id.as_str());
+            all.extend(
+                collectors
+                    .iter()
+                    .filter(|c| Some(c.id.as_str()) != open_id)
+                    .map(|c| Command {
+                        group: "Servers",
+                        label: format!("Switch to {} (Telelog Cloud)", c.name),
+                        glyph: Icon::Broadcast,
+                        shortcut: "",
+                        action: Action::SwitchCollector(crate::servers::CloudCollector {
+                            id: c.id.clone(),
+                            name: c.name.clone(),
+                            host: c.host.clone(),
+                        }),
+                    }),
+            );
+        }
+        if self.servers.cloud.is_none() {
+            all.push(command(
+                "Servers",
+                "Sign in to Telelog Cloud…",
+                Icon::Broadcast,
+                "",
+                Action::SignInCloud,
+            ));
+        }
         all.push(command(
             "Servers",
-            if self.open.saved.is_none() {
+            if self.open.is_unsaved() {
                 "Save this server…"
             } else {
                 "Add server…"
@@ -181,8 +211,18 @@ impl Workspace {
                     self.switch_server(open, cx);
                 }
             }
+            Action::SwitchCollector(collector) => {
+                if let Some(account) = &self.servers.cloud {
+                    let open = account.open(collector);
+                    self.switch_server(open, cx);
+                }
+            }
+            Action::SignInCloud => {
+                self.open_cloud_sign_in(window, cx);
+                return;
+            }
             Action::AddServer => {
-                let from = self.open.saved.is_none().then(|| self.open.connection.clone());
+                let from = self.open.is_unsaved().then(|| self.open.connection.clone());
                 self.open_add_server(from, window, cx);
                 // The dialog keeps its own focus; don't hand it back to the workspace below.
                 return;
