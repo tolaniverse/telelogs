@@ -1,4 +1,5 @@
-//! Client-side connection setup shared by the app and tests: optional TLS and a bearer token.
+//! Client-side connection setup shared by the app, the collector and tests: optional TLS and a
+//! bearer token.
 
 use anyhow::{Context as _, Result};
 use tonic::metadata::{Ascii, MetadataValue};
@@ -39,9 +40,15 @@ impl Interceptor for BearerToken {
 
 pub type Client = LogServiceClient<InterceptedService<Channel, BearerToken>>;
 
-/// Connects to `endpoint` (`http://` or `https://`). For `https`, the system roots are trusted,
-/// plus `ca_pem` when given (for self-signed server certificates).
+/// Connects to telelog-server at `endpoint` (see [`channel`]).
 pub async fn connect(endpoint: &str, token: Option<&str>, ca_pem: Option<&[u8]>) -> Result<Client> {
+    let channel = channel(endpoint, ca_pem).await?;
+    Ok(LogServiceClient::with_interceptor(channel, BearerToken::new(token)?))
+}
+
+/// Opens a channel to `endpoint` (`http://` or `https://`). For `https`, the system roots are
+/// trusted, plus `ca_pem` when given (for self-signed server certificates).
+pub async fn channel(endpoint: &str, ca_pem: Option<&[u8]>) -> Result<Channel> {
     let mut builder = Endpoint::from_shared(endpoint.to_string()).context("invalid server address")?;
     if endpoint.starts_with("https://") {
         let mut tls = ClientTlsConfig::new().with_native_roots();
@@ -52,6 +59,5 @@ pub async fn connect(endpoint: &str, token: Option<&str>, ca_pem: Option<&[u8]>)
     } else if ca_pem.is_some() {
         anyhow::bail!("a CA certificate was given but the server address is not https://");
     }
-    let channel = builder.connect().await?;
-    Ok(LogServiceClient::with_interceptor(channel, BearerToken::new(token)?))
+    Ok(builder.connect().await?)
 }

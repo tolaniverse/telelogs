@@ -7,7 +7,7 @@ use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 use telelog_server::archive::Archive;
 use telelog_server::{Config, TlsFiles, auth};
-use telelog_sources::{DockerSource, KubeSource, Sources};
+use telelog_sources::{Options, Sources};
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
@@ -93,7 +93,14 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let sources = connect_sources(&args).await?;
+    let sources = Sources::connect(&Options {
+        no_docker: args.no_docker,
+        kubernetes: args.kubernetes,
+        kube_context: args.kube_context.clone(),
+        namespaces: args.namespaces.clone(),
+        selector: args.selector.clone(),
+    })
+    .await?;
     let token = args.token.filter(|t| !t.is_empty());
     if token.as_ref().is_some_and(|t| t.len() < 16) {
         bail!("token is too short; use at least 16 characters (`telelog-server gen-token` makes one)");
@@ -130,40 +137,4 @@ async fn main() -> Result<()> {
         let _ = tokio::signal::ctrl_c().await;
     };
     telelog_server::serve(listener, Config { token, tls, archive }, sources, shutdown).await
-}
-
-/// Docker unless `--no-docker`, plus Kubernetes when asked for. With Kubernetes on, a missing
-/// Docker daemon is only a warning, so the same flags work on a laptop and inside a cluster.
-async fn connect_sources(args: &Args) -> Result<Sources> {
-    let kubernetes = args.kubernetes || args.kube_context.is_some();
-    let mut sources = Sources::default();
-    if !args.no_docker {
-        match DockerSource::connect() {
-            // Pods that Kubernetes runs on this same daemon are read by the Kubernetes source.
-            Ok(docker) if kubernetes => sources.docker = Some(docker.without_kubernetes()),
-            Ok(docker) => sources.docker = Some(docker),
-            Err(e) if kubernetes => tracing::warn!("not reading Docker: {e:#}"),
-            Err(e) => return Err(e),
-        }
-    }
-    if kubernetes {
-        let kube = KubeSource::connect(
-            args.kube_context.as_deref(),
-            args.namespaces.clone(),
-            args.selector.clone(),
-        )
-        .await?;
-        tracing::info!(
-            cluster = %kube.cluster,
-            namespaces = %if args.namespaces.is_empty() { "all".to_string() } else { args.namespaces.join(",") },
-            "reading Kubernetes"
-        );
-        sources.kubernetes = Some(kube);
-    } else if !args.namespaces.is_empty() || args.selector.is_some() {
-        bail!("--namespace and --selector need --kubernetes");
-    }
-    if sources.is_empty() {
-        bail!("no log sources: drop --no-docker or add --kubernetes");
-    }
-    Ok(sources)
 }

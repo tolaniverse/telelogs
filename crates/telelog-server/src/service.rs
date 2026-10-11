@@ -9,8 +9,6 @@ use tonic::{Request, Response, Status};
 
 use crate::archive::Archive;
 
-/// Max backlog lines per target, so a client can't request unbounded history.
-const MAX_BACKLOG: u32 = 10_000;
 const DEFAULT_QUERY_LIMIT: u32 = 5_000;
 const MAX_QUERY_LIMIT: u32 = 50_000;
 
@@ -64,30 +62,12 @@ impl LogService for Logs {
 
     async fn tail(&self, request: Request<v1::TailRequest>) -> Result<Response<RecordStream>, Status> {
         let request = request.into_inner();
-        let backlog = request.backlog.min(MAX_BACKLOG);
-
-        // No explicit targets means "everything": follow new containers and pods as they start too.
-        let records = if request.target_ids.is_empty() {
-            tracing::info!("live tail started");
-            self.sources
-                .tail_live(telelog_sources::LiveStart::Backlog(backlog))
-                .await
-                .map_err(|e| Status::unavailable(format!("{e:#}")))?
-        } else {
-            let targets: Vec<_> = self
-                .sources
-                .list_targets(false)
-                .await
-                .map_err(|e| Status::unavailable(format!("{e:#}")))?
-                .into_iter()
-                .filter(|t| request.target_ids.contains(&t.id))
-                .collect();
-            if targets.is_empty() {
-                return Err(Status::not_found("no running targets match the request"));
-            }
-            tracing::info!(count = targets.len(), "tail started");
-            self.sources.tail_many(&targets, backlog)
-        };
+        let records = self
+            .sources
+            .tail(&request.target_ids, request.backlog)
+            .await
+            .map_err(|e| Status::unavailable(format!("{e:#}")))?
+            .ok_or_else(|| Status::not_found("no running targets match the request"))?;
 
         let stream = records.map(|record| {
             record
