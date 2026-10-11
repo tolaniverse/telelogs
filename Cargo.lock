@@ -7832,6 +7832,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "telelog-archive"
+version = "0.3.1"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "chrono",
+ "futures",
+ "getrandom 0.3.4",
+ "object_store",
+ "serde",
+ "serde_json",
+ "telelog-core",
+ "telelog-sources",
+ "tokio",
+ "tracing",
+ "url",
+ "zstd",
+]
+
+[[package]]
 name = "telelog-collector"
 version = "0.3.1"
 dependencies = [
@@ -7881,16 +7901,12 @@ name = "telelog-server"
 version = "0.3.1"
 dependencies = [
  "anyhow",
- "bytes",
- "chrono",
  "clap",
  "futures",
  "getrandom 0.3.4",
- "object_store",
  "rcgen",
  "rustls",
- "serde",
- "serde_json",
+ "telelog-archive",
  "telelog-core",
  "telelog-proto",
  "telelog-sources",
@@ -7899,8 +7915,6 @@ dependencies = [
  "tonic",
  "tracing",
  "tracing-subscriber",
- "url",
- "zstd",
 ]
 
 [[package]]

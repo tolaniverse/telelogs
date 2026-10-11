@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
-use telelog_server::archive::Archive;
+use telelog_archive::Archive;
 use telelog_server::{Config, TlsFiles, auth};
 use telelog_sources::{Options, Sources};
 use tokio::net::TcpListener;

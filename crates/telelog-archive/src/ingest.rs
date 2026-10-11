@@ -8,7 +8,7 @@ use futures::StreamExt;
 use telelog_core::LogRecord;
 use telelog_sources::{LiveStart, Sources};
 
-use super::Archive;
+use crate::Archive;
 
 /// Lines per chunk before flushing early, so a burst doesn't build one huge object.
 const MAX_CHUNK_LINES: usize = 50_000;

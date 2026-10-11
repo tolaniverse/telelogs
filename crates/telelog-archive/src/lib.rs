@@ -1,6 +1,6 @@
-//! Long-term log storage in an object storage bucket you own (S3, R2, MinIO, GCS, or a local
-//! directory). The server archives every line it sees; the app queries it for history older
-//! than its in-memory buffer.
+//! Long-term log storage in an object storage bucket (S3, R2, MinIO, GCS, or a local
+//! directory). telelog-server archives every line it sees here; the app queries it for history
+//! older than the server's in-memory buffer.
 
 mod chunk;
 pub mod ingest;

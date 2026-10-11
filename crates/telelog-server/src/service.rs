@@ -7,7 +7,7 @@ use telelog_proto::{LogService, from_timestamp, to_timestamp, v1};
 use telelog_sources::Sources;
 use tonic::{Request, Response, Status};
 
-use crate::archive::Archive;
+use telelog_archive::Archive;
 
 const DEFAULT_QUERY_LIMIT: u32 = 5_000;
 const MAX_QUERY_LIMIT: u32 = 50_000;

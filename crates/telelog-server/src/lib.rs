@@ -1,6 +1,5 @@
 //! telelog-server as a library, so integration tests can run it in-process.
 
-pub mod archive;
 pub mod auth;
 mod service;
 
@@ -24,7 +23,7 @@ pub struct Config {
     pub token: Option<String>,
     pub tls: Option<TlsFiles>,
     /// When set, every source's output is archived to this bucket and can be queried.
-    pub archive: Option<Arc<archive::Archive>>,
+    pub archive: Option<Arc<telelog_archive::Archive>>,
 }
 
 /// Serves the gRPC API on `listener` until `shutdown` resolves.
@@ -47,8 +46,8 @@ pub async fn serve(
     // Archiving runs for as long as the server does, whether or not any app is connected.
     let background: Vec<_> = match &config.archive {
         Some(archive) => vec![
-            tokio::spawn(archive::ingest::run(archive.clone(), sources.clone())),
-            tokio::spawn(archive::ingest::sweep_forever(archive.clone())),
+            tokio::spawn(telelog_archive::ingest::run(archive.clone(), sources.clone())),
+            tokio::spawn(telelog_archive::ingest::sweep_forever(archive.clone())),
         ],
         None => Vec::new(),
     };

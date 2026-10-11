@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use telelog_archive::Archive;
 use telelog_core::{Filter, Level, LogRecord, SourceKind, Stream};
-use telelog_server::archive::Archive;
 
 const HOUR: u64 = 3600;
 const DAY: u64 = 86_400;
