@@ -16,12 +16,12 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 if [[ -z "$binary" ]]; then
-  cargo build -p telelog-app $([[ $profile == release ]] && echo --release)
+  cargo build -p telelogs $([[ $profile == release ]] && echo --release)
   binary="target/$profile/telelogs"
 fi
 
 version=$(cargo metadata --no-deps --format-version 1 |
-  python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "telelog-app"))')
+  python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "telelogs"))')
 app=target/$profile/Telelogs.app
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"

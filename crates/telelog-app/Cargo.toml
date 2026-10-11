@@ -1,9 +1,14 @@
 [package]
-name = "telelog-app"
-description = "Telelogs desktop app"
+name = "telelogs"
+description = "Telelogs desktop app: a native log viewer for Docker and Kubernetes"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+keywords = ["logs", "docker", "kubernetes", "gui", "gpui"]
+categories = ["development-tools::debugging", "gui"]
 
 [[bin]]
 name = "telelogs"

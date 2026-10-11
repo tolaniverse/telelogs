@@ -4,7 +4,7 @@ package telelog.v1;
 
 import "google/protobuf/timestamp.proto";
 
-// Served by telelog-server, consumed by telelog-app.
+// Served by telelog-server, consumed by the telelogs app.
 service LogService {
   // Lists every target the server can tail (containers, pods, VM files).
   rpc ListTargets(ListTargetsRequest) returns (ListTargetsResponse);

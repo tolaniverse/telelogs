@@ -4,6 +4,10 @@ description = "Shared log record model for Telelogs"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["logs", "logging", "telelogs"]
+categories = ["development-tools::debugging"]
 
 [dependencies]
 serde.workspace = true

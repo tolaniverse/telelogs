@@ -66,8 +66,8 @@ jobs:
         with:
           key: release-app
       - run: |
-          cargo build --release --locked -p telelog-app --target aarch64-apple-darwin
-          cargo build --release --locked -p telelog-app --target x86_64-apple-darwin
+          cargo build --release --locked -p telelogs --target aarch64-apple-darwin
+          cargo build --release --locked -p telelogs --target x86_64-apple-darwin
           lipo -create -output target/telelogs-universal \
             target/aarch64-apple-darwin/release/telelogs target/x86_64-apple-darwin/release/telelogs
           lipo -info target/telelogs-universal

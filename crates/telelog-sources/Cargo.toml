@@ -4,6 +4,10 @@ description = "Log sources (Docker, Kubernetes, VMs) for Telelogs"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["logs", "docker", "kubernetes", "telelogs"]
+categories = ["development-tools::debugging"]
 
 [dependencies]
 anyhow.workspace = true

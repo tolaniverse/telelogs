@@ -4,6 +4,11 @@ description = "Telelogs server: collects logs and streams them to the desktop ap
 version.workspace = true
 edition.workspace = true
 license = "AGPL-3.0-only"
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+keywords = ["logs", "docker", "kubernetes", "log-aggregator", "grpc"]
+categories = ["command-line-utilities", "development-tools::debugging"]
 
 [dependencies]
 anyhow.workspace = true

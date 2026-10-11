@@ -7,11 +7,13 @@ version = "0.2.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/tolaniverse/telelogs"
+homepage = "https://github.com/tolaniverse/telelogs"
 
 [workspace.dependencies]
-telelog-core = { path = "crates/telelog-core" }
-telelog-proto = { path = "crates/telelog-proto" }
-telelog-sources = { path = "crates/telelog-sources" }
+# Published crates need a version alongside the path; bump these with workspace.package.version.
+telelog-core = { path = "crates/telelog-core", version = "0.2.0" }
+telelog-proto = { path = "crates/telelog-proto", version = "0.2.0" }
+telelog-sources = { path = "crates/telelog-sources", version = "0.2.0" }
 
 anyhow = "1"
 bollard = "0.21"

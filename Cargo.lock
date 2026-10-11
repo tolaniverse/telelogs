@@ -7807,23 +7807,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "telelog-app"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "futures",
- "gpui-kit",
- "rust-embed",
- "serde_json",
- "telelog-core",
- "telelog-proto",
- "tokio",
- "tonic",
-]
-
-[[package]]
 name = "telelog-core"
 version = "0.2.0"
 dependencies = [
@@ -7884,6 +7867,23 @@ dependencies = [
  "telelog-core",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "telelogs"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "futures",
+ "gpui-kit",
+ "rust-embed",
+ "serde_json",
+ "telelog-core",
+ "telelog-proto",
+ "tokio",
+ "tonic",
 ]
 
 [[package]]
