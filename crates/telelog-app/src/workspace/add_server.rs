@@ -1,7 +1,9 @@
-//! The Add server dialog (name, URL, token and CA certificate) and the Telelog Cloud sign-in
-//! (gateway, token and CA certificate), each with a test before saving.
+//! The Add server dialog (name, URL, token and CA certificate), with a test before saving, and the
+//! Telelog Cloud sign-in: approved in the browser, or for development gateways a pasted gateway
+//! and token.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -9,6 +11,7 @@ use gpui_kit::*;
 
 use super::{Workspace, modal};
 use crate::client::{self, Connection};
+use crate::cloud::{self, Poll};
 use crate::servers;
 use crate::theme::{MONO, Tokens, tokens};
 use crate::ui::widgets::{icon_button, outline_button, primary_button};
@@ -153,7 +156,97 @@ impl Workspace {
     pub(super) fn open_cloud_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_add_server(None, window, cx);
         self.server_dialog = Dialog::Cloud;
+        self.cloud_with_token = false;
+        self.start_cloud_sign_in(window, cx);
+    }
+
+    /// Gets a code from the website, opens the browser to approve it, and waits for approval.
+    fn start_cloud_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let site = cloud::site();
+        let started = cloud::start(&self.runtime, site.clone());
+        self.cloud_code = None;
+        self.server_check = Check::Testing;
+        self._server_check = Some(cx.spawn_in(window, async move |this, cx| {
+            let started = match started.await.unwrap_or_else(|_| Err("stopped".into())) {
+                Ok(started) => started,
+                Err(e) => {
+                    let _ = this.update(cx, |this, cx| {
+                        this.server_check = Check::Failed(e);
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
+            let _ = this.update(cx, |this, cx| {
+                cx.open_url(&started.verification_uri_complete);
+                this.cloud_code = Some(started.clone());
+                this.server_check = Check::Idle;
+                cx.notify();
+            });
+            let every = Duration::from_secs(started.interval.max(1));
+            loop {
+                cx.background_executor().timer(every).await;
+                let Ok(Some(poll)) = this.update(cx, |this, _| {
+                    // Closing the dialog stops waiting.
+                    (this.add_server_open && this.server_dialog == Dialog::Cloud && !this.cloud_with_token)
+                        .then(|| cloud::poll(&this.runtime, site.clone(), started.device_code.clone()))
+                }) else {
+                    return;
+                };
+                let failed = match poll.await.unwrap_or_else(|_| Err("stopped".into())) {
+                    Ok(Poll::Pending) => continue,
+                    // The network blinked; the code is still good for a while.
+                    Err(e) if e.starts_with("couldn't reach") => continue,
+                    Ok(Poll::SignedIn { token, gateway }) => {
+                        let _ = this.update_in(cx, |this, window, cx| {
+                            this.signed_in_to_cloud(&token, gateway, None, window, cx)
+                        });
+                        return;
+                    }
+                    Ok(Poll::Denied) => "The sign-in was denied in the browser.".to_string(),
+                    Ok(Poll::Expired) => "The code expired. Try again.".to_string(),
+                    Err(e) => e,
+                };
+                let _ = this.update(cx, |this, cx| {
+                    this.cloud_code = None;
+                    this.server_check = Check::Failed(failed);
+                    cx.notify();
+                });
+                return;
+            }
+        }));
+        cx.notify();
+    }
+
+    /// Keeps the token in the Keychain and shows the workspace's collectors.
+    fn signed_in_to_cloud(
+        &mut self,
+        token: &str,
+        gateway: String,
+        ca_cert: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(e) = servers::set_token(servers::CLOUD_TOKEN, Some(token)) {
+            self.server_check = Check::Failed(e);
+            cx.notify();
+            return;
+        }
+        self.servers.cloud = Some(servers::CloudAccount { gateway, ca_cert });
+        self.servers.save();
+        self.cloud_code = None;
+        self.close_overlays(window, cx);
+        self.server_menu_open = true;
+        self.fetch_collectors(cx);
+    }
+
+    fn sign_in_with_token(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cloud_with_token = true;
+        self.cloud_code = None;
+        self.server_check = Check::Idle;
+        self._server_check = None;
         self.server_inputs.url.update(cx, |input, cx| input.focus(window, cx));
+        cx.notify();
     }
 
     fn server_fields(&self, cx: &App) -> Result<Fields, String> {
@@ -221,19 +314,8 @@ impl Workspace {
             }
         };
         if self.server_dialog == Dialog::Cloud {
-            if let Err(e) = servers::set_token(servers::CLOUD_TOKEN, fields.token.as_deref()) {
-                self.server_check = Check::Failed(e);
-                cx.notify();
-                return;
-            }
-            self.servers.cloud = Some(servers::CloudAccount {
-                gateway: fields.url,
-                ca_cert: fields.ca_cert,
-            });
-            self.servers.save();
-            self.close_overlays(window, cx);
-            self.server_menu_open = true;
-            self.fetch_collectors(cx);
+            let token = fields.token.clone().unwrap_or_default();
+            self.signed_in_to_cloud(&token, fields.url, fields.ca_cert, window, cx);
             return;
         }
         let server = self.servers.add(fields.name, fields.url, fields.ca_cert);
@@ -266,6 +348,42 @@ impl Workspace {
         let t = tokens(cx);
         let inputs = &self.server_inputs;
         let cloud = self.server_dialog == Dialog::Cloud;
+        let browser = cloud && !self.cloud_with_token;
+
+        let code = self.cloud_code.as_ref();
+        let browser_body = div()
+            .px(px(22.))
+            .py(px(22.))
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(14.))
+            .child(div().text_size(px(13.)).text_color(t.fg2).child(if code.is_some() {
+                "Approve this code in the browser window that opened:"
+            } else {
+                "Getting a code from Telelog Cloud…"
+            }))
+            .child(
+                div()
+                    .h(px(48.))
+                    .flex()
+                    .items_center()
+                    .font_family(MONO)
+                    .text_size(px(30.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(if code.is_some() { t.fg } else { t.fg3 })
+                    .child(code.map_or_else(|| "····-····".to_string(), |c| c.user_code.clone())),
+            )
+            .child(
+                div()
+                    .id("cloud-with-token")
+                    .text_size(px(12.5))
+                    .text_color(t.fg3)
+                    .cursor_pointer()
+                    .hover(|el| el.text_color(t.fg2))
+                    .child("Sign in with a gateway token instead")
+                    .on_click(cx.listener(|this, _, window, cx| this.sign_in_with_token(window, cx))),
+            );
 
         let form = div()
             .px(px(22.))
@@ -300,6 +418,12 @@ impl Workspace {
             ));
 
         let (glyph, color, message) = match &self.server_check {
+            Check::Idle if browser => (
+                Icon::ArrowsClockwise,
+                t.fg3,
+                "Waiting for approval in the browser…".to_string(),
+            ),
+            Check::Testing if browser => (Icon::ArrowsClockwise, t.fg3, "Getting a code…".to_string()),
             Check::Idle => (
                 Icon::LockSimple,
                 t.fg3,
@@ -361,7 +485,7 @@ impl Workspace {
                             .on_click(cx.listener(|this, _, window, cx| this.close_overlays(window, cx))),
                     ),
             )
-            .child(form)
+            .child(if browser { browser_body } else { form })
             .child(
                 div()
                     .flex()
@@ -384,18 +508,40 @@ impl Workspace {
                             .child(icon(glyph, 14., color))
                             .child(div().flex_1().min_w_0().child(message)),
                     )
-                    .child(
-                        outline_button(t, "test-server", "Test", None)
-                            .h(px(34.))
-                            .px(px(14.))
-                            .text_size(px(13.5))
-                            .rounded(px(8.))
-                            .on_click(cx.listener(|this, _, _, cx| this.test_server(cx))),
-                    )
-                    .child(
-                        primary_button(t, "save-server", if cloud { "Sign in" } else { "Save" }, None)
-                            .on_click(cx.listener(|this, _, window, cx| this.save_server(window, cx))),
-                    ),
+                    .when(browser, |el| {
+                        let again = matches!(self.server_check, Check::Failed(_));
+                        let url = code.map(|c| c.verification_uri_complete.clone());
+                        el.when_some(url.filter(|_| !again), |el, url| {
+                            el.child(
+                                outline_button(t, "open-browser", "Open browser", None)
+                                    .h(px(34.))
+                                    .px(px(14.))
+                                    .text_size(px(13.5))
+                                    .rounded(px(8.))
+                                    .on_click(move |_, _, cx| cx.open_url(&url)),
+                            )
+                        })
+                        .when(again, |el| {
+                            el.child(
+                                primary_button(t, "sign-in-again", "Try again", None)
+                                    .on_click(cx.listener(|this, _, window, cx| this.start_cloud_sign_in(window, cx))),
+                            )
+                        })
+                    })
+                    .when(!browser, |el| {
+                        el.child(
+                            outline_button(t, "test-server", "Test", None)
+                                .h(px(34.))
+                                .px(px(14.))
+                                .text_size(px(13.5))
+                                .rounded(px(8.))
+                                .on_click(cx.listener(|this, _, _, cx| this.test_server(cx))),
+                        )
+                        .child(
+                            primary_button(t, "save-server", if cloud { "Sign in" } else { "Save" }, None)
+                                .on_click(cx.listener(|this, _, window, cx| this.save_server(window, cx))),
+                        )
+                    }),
             );
         modal(t, panel, None, cx)
     }

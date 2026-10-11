@@ -156,6 +156,10 @@ pub struct Workspace {
     server_inputs: add_server::Inputs,
     server_check: add_server::Check,
     _server_check: Option<Task<()>>,
+    /// The code the Telelog Cloud sign-in shows, once the website has given one.
+    cloud_code: Option<crate::cloud::Started>,
+    /// Signing in to Telelog Cloud by pasting a gateway and token (development gateways).
+    cloud_with_token: bool,
     /// The signed-in Telelog Cloud workspace's collectors: None until fetched.
     cloud_collectors: Option<Result<Vec<telelog_proto::cloud::v1::Collector>, String>>,
     _cloud_fetch: Option<Task<()>>,
@@ -261,6 +265,8 @@ impl Workspace {
             server_inputs: add_server::Inputs::new(window, cx),
             server_check: add_server::Check::Idle,
             _server_check: None,
+            cloud_code: None,
+            cloud_with_token: false,
             cloud_collectors: None,
             _cloud_fetch: None,
             focus,

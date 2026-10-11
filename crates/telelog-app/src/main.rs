@@ -4,6 +4,7 @@ use gpui_kit::*;
 
 mod assets;
 mod client;
+mod cloud;
 mod config;
 mod json;
 mod remote;

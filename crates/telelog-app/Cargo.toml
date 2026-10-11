@@ -30,6 +30,7 @@ telelog-core.workspace = true
 telelog-proto.workspace = true
 tokio.workspace = true
 tonic.workspace = true
+ureq = { version = "3", features = ["json"] }
 
 [dev-dependencies]
 tokio-stream.workspace = true
