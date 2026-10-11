@@ -70,7 +70,11 @@ pub async fn run(collector: Collector, shutdown: impl Future<Output = ()>) -> Re
             Err(e) if refused(&e) => {
                 return Err(e.context("the gateway refused this collector's key; enroll it again"));
             }
-            Err(e) => tracing::warn!("gateway connection: {e:#}"),
+            // The gateway's own message says what's wrong; tonic's code name only adds noise.
+            Err(e) => match e.downcast_ref::<Status>() {
+                Some(status) => tracing::warn!("gateway connection: {}", status.message()),
+                None => tracing::warn!("gateway connection: {e:#}"),
+            },
         }
         // A connection that stayed up for a while was healthy, so start the backoff over.
         if started.elapsed() > timing.max_retry {
