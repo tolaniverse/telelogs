@@ -81,6 +81,16 @@ docker run -d --rm --name telelog-demo alpine sh -c \
   'i=0; while true; do i=$((i+1)); echo "INFO request $i ok"; sleep 0.5; done'
 ```
 
+## Using the app
+
+- **Sources:** tick the containers and pods to show in the stream. Hiding one doesn't stop the server reading it.
+- **Filter:** by text (message or source name), by level (Error, Warn, Info, Debug) and by time range. With a
+  bucket, a time range also reads lines the in-memory buffer no longer holds.
+- **Rows:** long lines wrap. Scroll up to pause following, and scroll back to the end to resume. Click a row
+  for its labels and JSON, **Filter by origin** or **Tail only this**.
+- **Keys:** `⌘K` opens the command palette (screens, time ranges, a single source, theme), `⌘J` switches
+  between rows and JSON.
+
 ## Kubernetes
 
 `--kubernetes` reads the logs of every pod: each container is a source named `namespace/pod/container`,
@@ -102,6 +112,9 @@ telelog-server --kube-context prod --namespace shop,payments --selector app.kube
 
 With Kubernetes on, a missing Docker daemon is only a warning, and containers that Kubernetes runs on the
 local daemon (Docker Desktop, OrbStack) are read through Kubernetes, not twice.
+
+In the app's sidebar, pods are grouped by namespace. A namespace's checkbox turns all its pods on or off, so
+`kube-system` and the like stay out of the stream; the server still reads them unless you pass `--namespace`.
 
 To run the server inside the cluster, [`deploy/kubernetes/telelog-server.yaml`](deploy/kubernetes/telelog-server.yaml)
 has a read-only service account (pods: get, list, watch; pods/log: get), the deployment and a service:
