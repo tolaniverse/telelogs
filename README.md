@@ -64,6 +64,16 @@ reads pods and their logs only, cluster-wide or in the namespaces you list
 (`--set 'namespaces={shop,payments}'`, optionally `--set selector=app=api`). See
 `deploy/helm/telelog-collector/values.yaml` for the rest.
 
+**About the Docker socket.** To read container logs, the Docker collector (and `telelog-server`) is given
+the host's Docker socket. `:ro` only stops the socket file from being replaced; it doesn't limit the
+requests sent through it, and anything that can reach that socket can start containers and mount the
+host's disks, which is the same as root on the machine. The collector itself only lists containers,
+watches events and reads logs. If you'd rather enforce that, put a socket proxy that allows only those
+reads in between, such as `tecnativa/docker-socket-proxy` with `CONTAINERS=1 EVENTS=1 POST=0`, and point
+the collector at it with `-e DOCKER_HOST=tcp://<proxy>:2375` instead of mounting the socket. The
+Kubernetes chart doesn't use the Docker socket: it reads pods and logs through the API with a
+read-only role.
+
 ## Running from source
 
 Requires Rust and a running Docker daemon.

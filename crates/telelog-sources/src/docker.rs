@@ -29,9 +29,10 @@ pub struct DockerSource {
 }
 
 impl DockerSource {
-    /// Connects using `DOCKER_HOST` or the platform's default socket.
+    /// Connects using `DOCKER_HOST` (`unix://…`, or `tcp://`/`http://` for a daemon or a
+    /// read-only socket proxy) or the platform's default socket.
     pub fn connect() -> Result<Self> {
-        let docker = Docker::connect_with_local_defaults().context("connecting to Docker")?;
+        let docker = Docker::connect_with_defaults().context("connecting to Docker")?;
         Ok(DockerSource {
             docker,
             skip_kubernetes: false,
@@ -447,5 +448,19 @@ mod tests {
             records[1].timestamp.duration_since(records[0].timestamp).unwrap(),
             Duration::from_secs(1)
         );
+    }
+}
+
+#[cfg(test)]
+mod connect_tests {
+    use super::*;
+
+    /// A tcp:// DOCKER_HOST (a socket proxy) is taken as is; nothing is contacted yet.
+    #[test]
+    fn takes_a_tcp_docker_host() {
+        // SAFETY: the only test in this binary that touches DOCKER_HOST.
+        unsafe { std::env::set_var("DOCKER_HOST", "tcp://docker-proxy:2375") };
+        assert!(DockerSource::connect().is_ok());
+        unsafe { std::env::remove_var("DOCKER_HOST") };
     }
 }
