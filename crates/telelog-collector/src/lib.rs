@@ -10,7 +10,7 @@ mod session;
 mod storage;
 
 pub use enrollment::{Enrollment, enroll};
-pub use session::{Collector, Timing, run};
+pub use session::{Collector, Timing, refused, run};
 
 use telelog_proto::cloud::v1::{CollectorFrame, collector_frame};
 

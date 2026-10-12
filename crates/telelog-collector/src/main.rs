@@ -76,21 +76,17 @@ async fn main() -> Result<()> {
 
     // Enrolled before: keep that identity. In a container the token is usually still set on
     // every restart, and it only works once.
-    let enrollment = match (state.exists(), args.enroll, args.gateway) {
-        (true, token, _) => {
+    let token = args.enroll.zip(args.gateway);
+    let (enrollment, token_unused) = match (state.exists(), &token) {
+        (true, token) => {
             let enrollment = Enrollment::load(&state)?;
             if token.is_some() {
-                tracing::info!(collector = %enrollment.collector_id, state = %state.display(), "already enrolled; not using the enrollment token again");
+                tracing::info!(collector = %enrollment.collector_id, state = %state.display(), "already enrolled; keeping the token in case this key is refused");
             }
-            enrollment
+            (enrollment, token.is_some())
         }
-        (false, Some(token), Some(gateway)) => {
-            let enrollment = telelog_collector::enroll(&gateway, &token, ca_pem.as_deref()).await?;
-            enrollment.save(&state)?;
-            tracing::info!(collector = %enrollment.collector_id, state = %state.display(), "enrolled");
-            enrollment
-        }
-        _ => anyhow::bail!(
+        (false, Some((token, gateway))) => (enroll(gateway, token, ca_pem.as_deref(), &state).await?, false),
+        (false, None) => anyhow::bail!(
             "this collector isn't enrolled yet (no {}): run it once with --enroll <token> --gateway <url>",
             state.display()
         ),
@@ -107,11 +103,47 @@ async fn main() -> Result<()> {
 
     let collector = Collector {
         enrollment,
+        sources: sources.clone(),
+        ca_pem: ca_pem.clone(),
+        timing: Timing::default(),
+    };
+    let mut shutdown = std::pin::pin!(shutdown_signal());
+    let Err(e) = telelog_collector::run(collector, &mut shutdown).await else {
+        return Ok(());
+    };
+    if !telelog_collector::refused(&e) {
+        return Err(e);
+    }
+    // The saved key no longer works, usually because the collector was removed in the dashboard
+    // and installed again with a new token while its old state stayed on the volume.
+    let Some((token, gateway)) = token.filter(|_| token_unused) else {
+        anyhow::bail!(
+            "the gateway refused this collector's key, so it was probably removed. Make a new enrollment token in the dashboard and run with --enroll <token>, which replaces the saved key in {}",
+            state.display()
+        );
+    };
+    tracing::warn!("the gateway refused the saved key; enrolling again with the enrollment token");
+    let enrollment = enroll(&gateway, &token, ca_pem.as_deref(), &state).await.map_err(|e| {
+        e.context(format!(
+            "the saved key was refused and the enrollment token didn't work either (each token works once). Make a new token in the dashboard, or delete {} and enroll again",
+            state.display()
+        ))
+    })?;
+    let collector = Collector {
+        enrollment,
         sources,
         ca_pem,
         timing: Timing::default(),
     };
-    telelog_collector::run(collector, shutdown_signal()).await
+    telelog_collector::run(collector, shutdown).await
+}
+
+/// Enrolls with `token` and saves the new id and key to `state`, replacing any there.
+async fn enroll(gateway: &str, token: &str, ca_pem: Option<&[u8]>, state: &std::path::Path) -> Result<Enrollment> {
+    let enrollment = telelog_collector::enroll(gateway, token, ca_pem).await?;
+    enrollment.save(state)?;
+    tracing::info!(collector = %enrollment.collector_id, state = %state.display(), "enrolled");
+    Ok(enrollment)
 }
 
 /// Ctrl-C, or SIGTERM from Docker or Kubernetes stopping the container.

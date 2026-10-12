@@ -91,7 +91,9 @@ pub async fn run(collector: Collector, shutdown: impl Future<Output = ()>) -> Re
     }
 }
 
-fn refused(e: &anyhow::Error) -> bool {
+/// Whether `run` stopped because the gateway refused the collector's key (the collector was
+/// removed, or its key replaced).
+pub fn refused(e: &anyhow::Error) -> bool {
     e.downcast_ref::<Status>()
         .is_some_and(|status| matches!(status.code(), Code::Unauthenticated | Code::PermissionDenied))
 }

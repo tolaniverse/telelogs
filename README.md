@@ -59,7 +59,10 @@ telelog-collector --enroll <token> --gateway <gateway>
 ```
 
 The token works once; the collector then keeps its id and key in its state file (`/state` in the
-container, a small persistent volume in the chart) and ignores the token on later starts. The chart
+container, a small persistent volume in the chart) and ignores the token on later starts. If you
+remove a collector in the dashboard and install it again, give it a new token: when the gateway
+refuses the saved key, the collector enrolls with the token and replaces it, so there's no state to
+delete by hand. The chart
 reads pods and their logs only, cluster-wide or in the namespaces you list
 (`--set 'namespaces={shop,payments}'`, optionally `--set selector=app=api`). See
 `deploy/helm/telelog-collector/values.yaml` for the rest.
