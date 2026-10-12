@@ -74,19 +74,26 @@ async fn main() -> Result<()> {
         .map(|path| std::fs::read(&path).with_context(|| format!("reading {}", path.display())))
         .transpose()?;
 
-    let enrollment = match (args.enroll, args.gateway) {
-        (Some(token), Some(gateway)) => {
+    // Enrolled before: keep that identity. In a container the token is usually still set on
+    // every restart, and it only works once.
+    let enrollment = match (state.exists(), args.enroll, args.gateway) {
+        (true, token, _) => {
+            let enrollment = Enrollment::load(&state)?;
+            if token.is_some() {
+                tracing::info!(collector = %enrollment.collector_id, state = %state.display(), "already enrolled; not using the enrollment token again");
+            }
+            enrollment
+        }
+        (false, Some(token), Some(gateway)) => {
             let enrollment = telelog_collector::enroll(&gateway, &token, ca_pem.as_deref()).await?;
             enrollment.save(&state)?;
             tracing::info!(collector = %enrollment.collector_id, state = %state.display(), "enrolled");
             enrollment
         }
-        _ => Enrollment::load(&state).with_context(|| {
-            format!(
-                "this collector isn't enrolled yet (no {}): run it once with --enroll <token> --gateway <url>",
-                state.display()
-            )
-        })?,
+        _ => anyhow::bail!(
+            "this collector isn't enrolled yet (no {}): run it once with --enroll <token> --gateway <url>",
+            state.display()
+        ),
     };
 
     let sources = Sources::connect(&Options {
@@ -104,8 +111,20 @@ async fn main() -> Result<()> {
         ca_pem,
         timing: Timing::default(),
     };
-    let shutdown = async {
-        let _ = tokio::signal::ctrl_c().await;
-    };
-    telelog_collector::run(collector, shutdown).await
+    telelog_collector::run(collector, shutdown_signal()).await
+}
+
+/// Ctrl-C, or SIGTERM from Docker or Kubernetes stopping the container.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        let mut term =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("listening for SIGTERM");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = term.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = tokio::signal::ctrl_c().await;
 }

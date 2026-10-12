@@ -1,0 +1,6 @@
+telelog-collector is starting in {{ .Release.Namespace }}. It reads pod logs from
+{{ if .Values.namespaces }}{{ join ", " .Values.namespaces }}{{ else }}every namespace{{ end }} and connects out to {{ .Values.gateway }}.
+
+It shows up in your Telelog Cloud dashboard once it has enrolled. To follow its startup:
+
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "collector.name" . }} -f

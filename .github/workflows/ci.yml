@@ -23,6 +23,16 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all --check
 
+  chart:
+    name: Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm lint deploy/helm/telelog-collector --set gateway=https://gateway.example --set enrollToken=tle_example
+      - name: Refuses to render without a gateway
+        run: "! helm template t deploy/helm/telelog-collector >/dev/null 2>&1"
+
   linux:
     name: Server and libraries (Linux)
     runs-on: ubuntu-latest

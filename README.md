@@ -12,6 +12,7 @@ Open-source log aggregator: a native desktop app (built with [GPUI](https://gpui
 | `telelog-proto` | gRPC API (`crates/telelog-proto/proto/telelog/v1/logs.proto`) and conversions |
 | `telelog-sources` | Log sources: Docker and Kubernetes; VMs next |
 | `telelog-server` | Self-hostable server that collects logs and streams them to the app |
+| `telelog-collector` | Sends a machine's or a cluster's logs to Telelog Cloud over one outbound connection |
 | `telelogs` (`crates/telelog-app`) | GPUI desktop client (`telelogs` binary) |
 
 ## Install
@@ -36,6 +37,32 @@ Or install both with Cargo (the app builds on macOS; it needs the Xcode Command 
 cargo install --locked telelog-server   # the server: telelog-server
 cargo install --locked telelogs         # the desktop app: telelogs
 ```
+
+## Telelog Cloud collector
+
+To reach your logs through Telelog Cloud instead of running a server, add a collector from your
+dashboard's **Add a collector**, which gives you the token and gateway for these:
+
+```sh
+# Docker
+docker run -d --name telelog-collector --restart unless-stopped \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro -v telelog-collector:/state \
+  ghcr.io/tolaniverse/telelog-collector --enroll <token> --gateway <gateway>
+
+# Kubernetes (Helm 3.8 or later)
+helm install telelog-collector oci://ghcr.io/tolaniverse/charts/telelog-collector \
+  --namespace telelogs --create-namespace --set enrollToken=<token> --set gateway=<gateway>
+
+# Linux or macOS binary
+curl -fsSL https://raw.githubusercontent.com/tolaniverse/telelogs/main/install-collector.sh | sh
+telelog-collector --enroll <token> --gateway <gateway>
+```
+
+The token works once; the collector then keeps its id and key in its state file (`/state` in the
+container, a small persistent volume in the chart) and ignores the token on later starts. The chart
+reads pods and their logs only, cluster-wide or in the namespaces you list
+(`--set 'namespaces={shop,payments}'`, optionally `--set selector=app=api`). See
+`deploy/helm/telelog-collector/values.yaml` for the rest.
 
 ## Running from source
 
@@ -164,7 +191,7 @@ Telelogs is open source under two licenses:
 | Component | License |
 |---|---|
 | `telelog-server` | [AGPL-3.0-only](LICENSE-AGPL) |
-| `telelogs`, `telelog-core`, `telelog-proto`, `telelog-sources` | [Apache-2.0](LICENSE-APACHE) |
+| `telelogs`, `telelog-core`, `telelog-proto`, `telelog-sources`, `telelog-archive`, `telelog-collector` | [Apache-2.0](LICENSE-APACHE) |
 
 You can self-host, modify and use the server freely. If you offer a modified server to others over a network, the AGPL requires you to publish your changes. The app and libraries are permissive, so you can embed them or build integrations without restriction.
 

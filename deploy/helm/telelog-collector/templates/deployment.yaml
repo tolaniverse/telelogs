@@ -1,0 +1,82 @@
+{{- if not .Values.gateway }}
+{{- fail "set gateway to Telelog Cloud's gateway address, as the dashboard shows it" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "collector.name" . }}
+  labels: {{- include "collector.labels" . | nindent 4 }}
+spec:
+  # One collector per cluster. Recreate, so an update never runs two pods with the same key (the
+  # gateway would refuse the second).
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {{- include "collector.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "collector.selector" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "collector.name" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: collector
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["--kubernetes", "--no-docker"]
+          env:
+            - name: TELELOG_GATEWAY
+              value: {{ .Values.gateway | quote }}
+            {{- if or .Values.enrollToken .Values.existingSecret }}
+            - name: TELELOG_ENROLL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "collector.secret" . }}
+                  key: enroll-token
+            {{- end }}
+            {{- with .Values.namespaces }}
+            - name: TELELOG_NAMESPACES
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- with .Values.selector }}
+            - name: TELELOG_KUBE_SELECTOR
+              value: {{ . | quote }}
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: state
+              mountPath: /state
+          {{- with .Values.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: state
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-state" (include "collector.name" .)) .Values.persistence.existingClaim }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}

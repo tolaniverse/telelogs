@@ -1,0 +1,12 @@
+apiVersion: v2
+name: telelog-collector
+description: Sends a Kubernetes cluster's pod logs to Telelog Cloud over one outbound connection.
+type: application
+# Both follow the Telelogs release; the release workflow sets them from the tag.
+version: 0.4.0
+appVersion: "0.4.0"
+home: https://github.com/tolaniverse/telelogs
+sources:
+  - https://github.com/tolaniverse/telelogs
+keywords: [logs, kubernetes, telelogs, log-aggregation]
+license: Apache-2.0

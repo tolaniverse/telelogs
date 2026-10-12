@@ -1,0 +1,39 @@
+# One-time token from the dashboard's "Add a collector". Used once, on first start; the
+# collector's id and key are then kept on the persistent volume. Or point existingSecret at a
+# Secret with the key `enroll-token`.
+enrollToken: ""
+existingSecret: ""
+
+# Telelog Cloud's gateway, as the dashboard shows it.
+gateway: ""
+
+# Namespaces to read; empty reads every namespace (and grants cluster-wide read of pods and logs).
+namespaces: []
+# Only read pods matching this label selector, e.g. "app.kubernetes.io/part-of=shop".
+selector: ""
+
+image:
+  repository: ghcr.io/tolaniverse/telelog-collector
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Keeps the collector's identity across restarts. Without it, every new pod would need a new token.
+persistence:
+  enabled: true
+  size: 16Mi
+  storageClass: ""
+  # Use an existing claim instead of making one.
+  existingClaim: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
