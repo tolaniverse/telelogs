@@ -39,7 +39,7 @@ base="https://github.com/$repo/releases/download/$tag"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-say "Downloading telelog-collector $version for $os-$arch…"
+say "Downloading telelog-collector ${version} for ${os}-${arch}..."
 curl -fsSL -o "$tmp/$name.tar.gz" "$base/$name.tar.gz" || fail "no $name.tar.gz in release $tag"
 curl -fsSL -o "$tmp/SHA256SUMS" "$base/SHA256SUMS" || fail "no SHA256SUMS in release $tag"
 
